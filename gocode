@@ -1,0 +1,747 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gocode — Personal Developer Workflow System
+# Author: Ace
+# Version: 1.0.0
+# Location: ~/.scripts/gocode
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+PROJECTS_DIR="$HOME/Desktop/js-projects"
+SESSION_DIR="$HOME/.devsession"
+SESSION_FILE="$SESSION_DIR/session.json"
+PROJECTS_REGISTRY="$SESSION_DIR/projects.json"
+OBSIDIAN_VAULT="$HOME/Desktop/DevMaster-Vault"
+OBSIDIAN_DAILY="$OBSIDIAN_VAULT/05-DAILY-NOTES"
+OBSIDIAN_ACTIVE="$OBSIDIAN_VAULT/01-PROJECTS/Active"
+CHROME_PROFILE="Default"
+SLEEP_BEFORE_CHROME=10
+GH_USER=$(gh api user --jq '.login' 2>/dev/null || git config user.name)
+
+# Browser tabs to open on every new project
+BROWSER_TABS=(
+    "https://chatgpt.com"
+    "https://claude.ai"
+    "https://developer.mozilla.org"
+    "http://localhost:5500"
+)
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UTILITIES
+# ─────────────────────────────────────────────────────────────────────────────
+print_banner() {
+    echo -e "${CYAN}${BOLD}"
+    echo "  ██████╗  ██████╗  ██████╗ ██████╗ ██████╗ ███████╗"
+    echo " ██╔════╝ ██╔═══██╗██╔════╝██╔═══██╗██╔══██╗██╔════╝"
+    echo " ██║  ███╗██║   ██║██║     ██║   ██║██║  ██║█████╗  "
+    echo " ██║   ██║██║   ██║██║     ██║   ██║██║  ██║██╔══╝  "
+    echo " ╚██████╔╝╚██████╔╝╚██████╗╚██████╔╝██████╔╝███████╗"
+    echo "  ╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝"
+    echo -e "${RESET}${DIM}  Personal Developer Workflow System — v1.0.0${RESET}"
+    echo ""
+}
+
+log_info()    { echo -e "${BLUE}[INFO]${RESET}  $1"; }
+log_ok()      { echo -e "${GREEN}[OK]${RESET}    $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${RESET}  $1"; }
+log_error()   { echo -e "${RED}[ERROR]${RESET} $1"; }
+log_step()    { echo -e "${CYAN}[....] ${BOLD}$1${RESET}"; }
+log_done()    { echo -e "${GREEN}[DONE] ${BOLD}$1${RESET}"; }
+divider()     { echo -e "${DIM}────────────────────────────────────────────────────${RESET}"; }
+
+confirm() {
+    local prompt="$1"
+    read -rp "$(echo -e "${YELLOW}[?]${RESET} $prompt [y/N]: ")" answer
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPENDENCY CHECKS
+# ─────────────────────────────────────────────────────────────────────────────
+check_dependencies() {
+    log_step "Checking dependencies..."
+    local missing=()
+
+    for cmd in git gh code google-chrome jq; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+
+    # jq — auto install silently if missing
+    if [[ " ${missing[*]} " =~ " jq " ]]; then
+        log_warn "jq not found. Installing..."
+        sudo apt-get install -y jq &>/dev/null
+        if command -v jq &>/dev/null; then
+            log_ok "jq installed."
+            missing=("${missing[@]/jq}")
+        fi
+    fi
+
+    # Netlify — silent check only, no prompt
+    if ! command -v netlify &>/dev/null; then
+        log_warn "Netlify CLI not found — auto-deploy will be skipped."
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_error "Missing required dependencies: ${missing[*]}"
+        log_error "Install them and re-run gocode."
+        exit 1
+    fi
+
+    log_ok "All dependencies found."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION / REGISTRY INIT
+# ─────────────────────────────────────────────────────────────────────────────
+init_session_dir() {
+    mkdir -p "$SESSION_DIR"
+    mkdir -p "$PROJECTS_DIR"
+    mkdir -p "$OBSIDIAN_DAILY"
+    mkdir -p "$OBSIDIAN_ACTIVE"
+
+    # Init projects registry if not exists
+    if [ ! -f "$PROJECTS_REGISTRY" ]; then
+        echo '{"projects":[]}' > "$PROJECTS_REGISTRY"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROJECT REGISTRY FUNCTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+get_projects() {
+    jq -r '.projects[]' "$PROJECTS_REGISTRY" 2>/dev/null
+}
+
+get_incomplete_projects() {
+    jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY" 2>/dev/null
+}
+
+get_all_projects_display() {
+    jq -r '.projects[] | "\(.status) | \(.name) | \(.created) | \(.repo_url // "no-repo")"' "$PROJECTS_REGISTRY" 2>/dev/null
+}
+
+add_project_to_registry() {
+    local name="$1"
+    local path="$2"
+    local repo_url="$3"
+    local netlify_url="$4"
+    local date
+    date=$(date +%Y-%m-%d)
+
+    local new_entry
+    new_entry=$(jq \
+        --arg name "$name" \
+        --arg path "$path" \
+        --arg repo "$repo_url" \
+        --arg netlify "$netlify_url" \
+        --arg date "$date" \
+        '.projects += [{
+            "name": $name,
+            "path": $path,
+            "status": "active",
+            "created": $date,
+            "repo_url": $repo,
+            "netlify_url": $netlify,
+            "last_opened": $date
+        }]' "$PROJECTS_REGISTRY")
+    echo "$new_entry" > "$PROJECTS_REGISTRY"
+}
+
+mark_project_complete() {
+    local name="$1"
+    local updated
+    updated=$(jq \
+        --arg name "$name" \
+        '(.projects[] | select(.name == $name) | .status) = "completed"' \
+        "$PROJECTS_REGISTRY")
+    echo "$updated" > "$PROJECTS_REGISTRY"
+    log_ok "Marked '$name' as completed."
+}
+
+update_last_opened() {
+    local name="$1"
+    local date
+    date=$(date +%Y-%m-%d)
+    local updated
+    updated=$(jq \
+        --arg name "$name" \
+        --arg date "$date" \
+        '(.projects[] | select(.name == $name) | .last_opened) = $date' \
+        "$PROJECTS_REGISTRY")
+    echo "$updated" > "$PROJECTS_REGISTRY"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OBSIDIAN LOGGING
+# ─────────────────────────────────────────────────────────────────────────────
+write_daily_note() {
+    local project_name="$1"
+    local repo_url="$2"
+    local netlify_url="$3"
+    local action="$4"  # "created" or "resumed"
+    local date
+    date=$(date +%Y-%m-%d)
+    local time
+    time=$(date +%H:%M)
+    local daily_note="$OBSIDIAN_DAILY/${date}.md"
+
+    # Create note with frontmatter if it doesn't exist
+    if [ ! -f "$daily_note" ]; then
+        cat > "$daily_note" <<EOF
+---
+date: $date
+type: daily
+tags: [daily, coding]
+---
+
+# $date
+
+## Dev Sessions
+EOF
+    fi
+
+    # Append project entry
+    cat >> "$daily_note" <<EOF
+
+### $time — $action: $project_name
+- **Repo:** $repo_url
+- **Netlify:** ${netlify_url:-"not deployed"}
+- **Status:** active
+EOF
+
+    log_ok "Obsidian daily note updated: ${date}.md"
+}
+
+write_project_note() {
+    local project_name="$1"
+    local repo_url="$2"
+    local netlify_url="$3"
+    local date
+    date=$(date +%Y-%m-%d)
+    local project_note="$OBSIDIAN_ACTIVE/${project_name}.md"
+
+    cat > "$project_note" <<EOF
+---
+project: $project_name
+created: $date
+status: active
+repo: $repo_url
+netlify: ${netlify_url:-"not deployed"}
+tags: [project, javascript, active]
+---
+
+# $project_name
+
+## Overview
+> Add project description here.
+
+## Links
+- **GitHub:** $repo_url
+- **Live:** ${netlify_url:-"not deployed"}
+
+## Goals
+- [ ] 
+
+## Progress Log
+
+### $date — Project Created
+- Initial commit pushed
+- Starter files: index.html, style.css, script.js, README.md
+
+## Notes
+
+EOF
+
+    log_ok "Obsidian project note created: ${project_name}.md"
+}
+
+open_obsidian_note() {
+    local note_path="$1"
+    if command -v obsidian &>/dev/null; then
+        obsidian "$note_path" &>/dev/null &
+    else
+        # Try xdg-open as fallback
+        xdg-open "$note_path" &>/dev/null &
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOILERPLATE INJECTION
+# ─────────────────────────────────────────────────────────────────────────────
+inject_html() {
+    local project_name="$1"
+    cat > index.html <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>$project_name</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <script src="script.js"></script>
+</body>
+</html>
+EOF
+}
+
+inject_css() {
+    cat > style.css <<EOF
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: sans-serif;
+    background-color: #f5f5f5;
+    color: #333;
+}
+EOF
+}
+
+inject_js() {
+    local project_name="$1"
+    cat > script.js <<EOF
+const DOM = {
+
+};
+
+function init() {
+    console.log('$project_name — ready.');
+}
+
+init();
+EOF
+}
+
+inject_readme() {
+    local project_name="$1"
+    local repo_url="$2"
+    local netlify_url="${3:-}"
+    local date
+    date=$(date +%Y-%m-%d)
+    cat > README.md <<EOF
+# $project_name
+
+> Started: $date
+
+## Description
+
+
+## Live Demo
+${netlify_url:+[$project_name on Netlify]($netlify_url)}${netlify_url:-not deployed yet}
+
+## Repo
+$repo_url
+
+## Built With
+- HTML
+- CSS
+- JavaScript (Vanilla)
+EOF
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BROWSER LAUNCH
+# ─────────────────────────────────────────────────────────────────────────────
+open_browser_tabs() {
+    log_step "Opening browser tabs in ${SLEEP_BEFORE_CHROME}s..."
+    sleep "$SLEEP_BEFORE_CHROME"
+    for tab in "${BROWSER_TABS[@]}"; do
+        google-chrome --profile-directory="$CHROME_PROFILE" "$tab" &>/dev/null &
+        sleep 0.5
+    done
+    log_ok "Browser tabs opened."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESUME EXISTING PROJECT
+# ─────────────────────────────────────────────────────────────────────────────
+resume_project() {
+    local project_name="$1"
+    local project_path
+    project_path=$(jq -r \
+        --arg name "$project_name" \
+        '.projects[] | select(.name == $name) | .path' \
+        "$PROJECTS_REGISTRY")
+
+    if [ ! -d "$project_path" ]; then
+        log_error "Project folder not found at: $project_path"
+        return 1
+    fi
+
+    log_step "Resuming: $project_name"
+    update_last_opened "$project_name"
+
+    local repo_url
+    repo_url=$(jq -r \
+        --arg name "$project_name" \
+        '.projects[] | select(.name == $name) | .repo_url' \
+        "$PROJECTS_REGISTRY")
+
+    local netlify_url
+    netlify_url=$(jq -r \
+        --arg name "$project_name" \
+        '.projects[] | select(.name == $name) | .netlify_url' \
+        "$PROJECTS_REGISTRY")
+
+    # Write daily note for resume
+    write_daily_note "$project_name" "$repo_url" "$netlify_url" "resumed"
+
+    # Open VS Code
+    log_step "Opening VS Code..."
+    code "$project_path"
+
+    # Open browser after delay
+    open_browser_tabs &
+
+    log_done "Resumed: $project_name"
+    divider
+    echo -e "${GREEN}Repo:${RESET}    $repo_url"
+    echo -e "${GREEN}Netlify:${RESET} ${netlify_url:-not deployed}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CREATE NEW PROJECT
+# ─────────────────────────────────────────────────────────────────────────────
+create_project() {
+    divider
+    log_step "New Project Setup"
+    divider
+
+    # Get project name
+    local project_name=""
+    while true; do
+        read -rp "$(echo -e "${YELLOW}[?]${RESET} Project name (e.g. weather-app): ")" project_name
+        project_name=$(echo "$project_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-')
+
+        if [ -z "$project_name" ]; then
+            log_error "Name cannot be empty."
+            continue
+        fi
+
+        if [ -d "$PROJECTS_DIR/$project_name" ]; then
+            log_error "Folder '$project_name' already exists in $PROJECTS_DIR. Choose a different name."
+            continue
+        fi
+
+        # Check registry for duplicates
+        local exists
+        exists=$(jq -r \
+            --arg name "$project_name" \
+            '.projects[] | select(.name == $name) | .name' \
+            "$PROJECTS_REGISTRY")
+        if [ -n "$exists" ]; then
+            log_error "Project '$project_name' already exists in registry."
+            continue
+        fi
+
+        break
+    done
+
+    local project_path="$PROJECTS_DIR/$project_name"
+
+    # ── Create folder structure ──────────────────────────────────────────────
+    log_step "Creating folder structure..."
+    mkdir -p "$project_path"
+    cd "$project_path" || exit 1
+
+    touch index.html style.css script.js README.md
+    inject_html "$project_name"
+    inject_css
+    inject_js "$project_name"
+    log_ok "Starter files created."
+
+    # ── Git init + initial commit ────────────────────────────────────────────
+    log_step "Initializing git..."
+    git init -q
+    git add .
+    git commit -m "feat: initial commit" -q
+    log_ok "Git initialized and committed."
+
+    # ── GitHub repo — create, set remote, push ───────────────────────────────
+    log_step "Creating GitHub repo..."
+    local repo_url=""
+    local gh_output
+    gh_output=$(gh repo create "$project_name" --public 2>&1)
+    if echo "$gh_output" | grep -q "github.com"; then
+        repo_url=$(gh repo view "$project_name" --json url -q '.url' 2>/dev/null)
+        git remote add origin "https://github.com/${GH_USER}/${project_name}.git" 2>/dev/null
+        git branch -M main 2>/dev/null
+        git push -u origin main -q 2>/dev/null
+        log_ok "GitHub repo created: $repo_url"
+        log_ok "Initial commit pushed."
+    else
+        log_error "GitHub repo creation failed: $gh_output"
+        log_warn "Continuing with local git only."
+        repo_url="local-only"
+    fi
+
+    # ── Netlify deploy ───────────────────────────────────────────────────────
+    local netlify_url=""
+    if command -v netlify &>/dev/null; then
+        log_step "Deploying to Netlify..."
+        local netlify_output
+        netlify_output=$(netlify deploy --dir=. --prod 2>&1)
+        netlify_url=$(echo "$netlify_output" | grep -oP 'https://[a-z0-9\-]+\.netlify\.app' | head -1)
+        if [ -n "$netlify_url" ]; then
+            log_ok "Netlify deployed: $netlify_url"
+            log_step "Linking Netlify to GitHub repo..."
+            netlify link --gitRemoteUrl "https://github.com/${GH_USER}/${project_name}.git" &>/dev/null \
+                && log_ok "Netlify linked to GitHub — auto-deploy on every push enabled." \
+                || log_warn "Netlify link failed. Run 'netlify link' manually inside the project folder."
+        else
+            log_warn "Netlify deploy failed. Run 'netlify login' if not authenticated."
+        fi
+    else
+        log_warn "Netlify CLI not found — skipping deploy."
+    fi
+
+    # ── Update README with final URLs and push ───────────────────────────────
+    inject_readme "$project_name" "$repo_url" "$netlify_url"
+    git add README.md
+    git commit -m "docs: update readme with links" -q
+    if [ "$repo_url" != "local-only" ]; then
+        git push -q 2>/dev/null
+    fi
+
+    # ── Save to registry ─────────────────────────────────────────────────────
+    add_project_to_registry "$project_name" "$project_path" "$repo_url" "$netlify_url"
+
+    # ── Obsidian notes ───────────────────────────────────────────────────────
+    log_step "Writing Obsidian notes..."
+    write_daily_note "$project_name" "$repo_url" "$netlify_url" "created"
+    write_project_note "$project_name" "$repo_url" "$netlify_url"
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+    divider
+    log_done "Project '$project_name' is ready."
+    divider
+    echo -e "${GREEN}Folder:${RESET}  $project_path"
+    echo -e "${GREEN}Repo:${RESET}    $repo_url"
+    echo -e "${GREEN}Netlify:${RESET} ${netlify_url:-not deployed}"
+    divider
+
+    # ── Open VS Code ─────────────────────────────────────────────────────────
+    log_step "Opening VS Code..."
+    code "$project_path"
+
+    # ── Open browser after delay (background) ────────────────────────────────
+    open_browser_tabs &
+
+    log_done "Session started. Happy coding, Ace."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STATUS DASHBOARD
+# ─────────────────────────────────────────────────────────────────────────────
+show_status() {
+    print_banner
+    divider
+    echo -e "${BOLD}PROJECT DASHBOARD${RESET}"
+    divider
+
+    local total active completed
+    total=$(jq '.projects | length' "$PROJECTS_REGISTRY")
+    active=$(jq '[.projects[] | select(.status == "active")] | length' "$PROJECTS_REGISTRY")
+    completed=$(jq '[.projects[] | select(.status == "completed")] | length' "$PROJECTS_REGISTRY")
+
+    echo -e "  Total: ${BOLD}$total${RESET}   Active: ${GREEN}$active${RESET}   Completed: ${DIM}$completed${RESET}"
+    echo ""
+
+    # Active projects
+    if [ "$active" -gt 0 ]; then
+        echo -e "${GREEN}${BOLD}ACTIVE${RESET}"
+        jq -r '.projects[] | select(.status == "active") | "  \(.name) | \(.created) | \(.repo_url)"' \
+            "$PROJECTS_REGISTRY" | while IFS= read -r line; do
+            echo -e "  ${GREEN}▸${RESET} $line"
+        done
+        echo ""
+    fi
+
+    # Completed projects
+    if [ "$completed" -gt 0 ]; then
+        echo -e "${DIM}${BOLD}COMPLETED${RESET}"
+        jq -r '.projects[] | select(.status == "completed") | "  \(.name) | \(.created)"' \
+            "$PROJECTS_REGISTRY" | while IFS= read -r line; do
+            echo -e "  ${DIM}✓ $line${RESET}"
+        done
+        echo ""
+    fi
+
+    divider
+
+    # Open today's Obsidian daily note
+    local date
+    date=$(date +%Y-%m-%d)
+    local daily_note="$OBSIDIAN_DAILY/${date}.md"
+    if [ -f "$daily_note" ]; then
+        log_step "Opening Obsidian daily note..."
+        open_obsidian_note "$daily_note"
+    else
+        log_warn "No daily note for today yet."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MARK COMPLETE FLOW
+# ─────────────────────────────────────────────────────────────────────────────
+show_complete_menu() {
+    local active_projects=()
+    while IFS= read -r name; do
+        active_projects+=("$name")
+    done < <(jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY")
+
+    if [ ${#active_projects[@]} -eq 0 ]; then
+        log_info "No active projects to mark complete."
+        return
+    fi
+
+    echo -e "${BOLD}Mark a project as completed:${RESET}"
+    for i in "${!active_projects[@]}"; do
+        echo -e "  ${CYAN}$((i+1))${RESET}. ${active_projects[$i]}"
+    done
+    echo ""
+
+    local choice
+    read -rp "$(echo -e "${YELLOW}[?]${RESET} Enter number (or 0 to cancel): ")" choice
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le "${#active_projects[@]}" ]; then
+        local selected="${active_projects[$((choice-1))]}"
+        mark_project_complete "$selected"
+
+        # Update Obsidian project note status
+        local project_note="$OBSIDIAN_ACTIVE/${selected}.md"
+        if [ -f "$project_note" ]; then
+            sed -i 's/status: active/status: completed/' "$project_note"
+            log_ok "Obsidian note updated."
+        fi
+    else
+        log_info "Cancelled."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESUME FLOW — show active projects list
+# ─────────────────────────────────────────────────────────────────────────────
+show_resume_menu() {
+    local active_projects=()
+    while IFS= read -r name; do
+        active_projects+=("$name")
+    done < <(jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY")
+
+    if [ ${#active_projects[@]} -eq 0 ]; then
+        return 1  # signal: no active projects
+    fi
+
+    divider
+    echo -e "${BOLD}Active Projects:${RESET}"
+    divider
+    for i in "${!active_projects[@]}"; do
+        local proj="${active_projects[$i]}"
+        local last_opened repo
+        last_opened=$(jq -r --arg n "$proj" '.projects[] | select(.name == $n) | .last_opened' "$PROJECTS_REGISTRY")
+        repo=$(jq -r --arg n "$proj" '.projects[] | select(.name == $n) | .repo_url' "$PROJECTS_REGISTRY")
+        echo -e "  ${CYAN}$((i+1))${RESET}. ${BOLD}$proj${RESET} ${DIM}(last opened: $last_opened)${RESET}"
+        echo -e "     ${DIM}$repo${RESET}"
+    done
+    echo -e "  ${CYAN}N${RESET}. Start a new project"
+    echo -e "  ${CYAN}C${RESET}. Mark a project as completed"
+    echo -e "  ${CYAN}S${RESET}. Status dashboard"
+    divider
+
+    local choice
+    read -rp "$(echo -e "${YELLOW}[?]${RESET} Choice: ")" choice
+
+    case "$choice" in
+        [Nn]) return 2 ;;  # signal: new project
+        [Cc]) show_complete_menu; main_menu ;;
+        [Ss]) show_status; exit 0 ;;
+        *)
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -gt 0 ] && [ "$choice" -le "${#active_projects[@]}" ]; then
+                resume_project "${active_projects[$((choice-1))]}"
+                exit 0
+            else
+                log_error "Invalid choice."
+                show_resume_menu
+            fi
+        ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN MENU
+# ─────────────────────────────────────────────────────────────────────────────
+main_menu() {
+    local has_active
+    has_active=$(jq '[.projects[] | select(.status == "active")] | length' "$PROJECTS_REGISTRY")
+
+    if [ "$has_active" -gt 0 ]; then
+        show_resume_menu
+        local result=$?
+        if [ "$result" -eq 2 ]; then
+            create_project
+        fi
+    else
+        log_info "No active projects. Starting new project setup."
+        echo ""
+        create_project
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENTRYPOINT
+# ─────────────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+    --status|-s)
+        init_session_dir
+        show_status
+        exit 0
+        ;;
+    --complete|-c)
+        init_session_dir
+        show_complete_menu
+        exit 0
+        ;;
+    --help|-h)
+        print_banner
+        echo -e "  ${BOLD}Usage:${RESET}"
+        echo -e "    gocode              — Start or resume a project"
+        echo -e "    gocode --status     — Dashboard + open Obsidian"
+        echo -e "    gocode --complete   — Mark a project as completed"
+        echo -e "    gocode --help       — Show this help"
+        exit 0
+        ;;
+    "")
+        print_banner
+        check_dependencies
+        init_session_dir
+        main_menu
+        ;;
+    *)
+        log_error "Unknown flag: $1. Run 'gocode --help'."
+        exit 1
+        ;;
+esac
