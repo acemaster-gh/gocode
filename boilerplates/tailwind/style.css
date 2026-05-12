@@ -1,0 +1,19 @@
+/* =============================================================================
+   style.css — PROJECT_NAME (Tailwind)
+   Custom styles that extend Tailwind — keep this minimal
+   ============================================================================= */
+
+/* ── Reset extras ───────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+/* ── Custom utilities not in Tailwind ───────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ── Focus ring consistent with primary color ───────────────────────────────── */
+*:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+}

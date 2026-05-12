@@ -1,0 +1,232 @@
+/* =============================================================================
+   style.css — PROJECT_NAME
+   ============================================================================= */
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* ── Design Tokens ──────────────────────────────────────────────────────────── */
+:root {
+    /* Colors — Light */
+    --bg-main:           #f1f5f9;
+    --bg-card:           #ffffff;
+    --bg-input:          #f8fafc;
+    --bg-input-focus:    #ffffff;
+    --text-main:         #0f172a;
+    --text-secondary:    #334155;
+    --text-muted:        #64748b;
+    --primary:           #6366f1;
+    --primary-hover:     #4f46e5;
+    --primary-light:     #818cf8;
+    --border:            #cbd5e1;
+    --border-focus:      #6366f1;
+    --success:           #22c55e;
+    --success-bg:        #dcfce7;
+    --error:             #ef4444;
+    --error-bg:          #fee2e2;
+    --warning:           #f59e0b;
+    --warning-bg:        #fef9c3;
+
+    /* Shadows */
+    --shadow-sm:         0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow-main:       0 10px 25px rgba(0, 0, 0, 0.08);
+    --shadow-focus:      0 0 0 4px rgba(99, 102, 241, 0.2);
+
+    /* Typography */
+    --font-main:         'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    --font-mono:         'Courier New', Courier, monospace;
+    --fs-xs:             0.75rem;
+    --fs-sm:             0.875rem;
+    --fs-md:             1rem;
+    --fs-lg:             1.25rem;
+    --fs-xl:             1.5rem;
+    --fs-2xl:            2rem;
+    --fw-normal:         400;
+    --fw-medium:         500;
+    --fw-bold:           700;
+    --line-height:       1.6;
+
+    /* Spacing */
+    --space-xs:          0.25rem;
+    --space-sm:          0.5rem;
+    --space-md:          1rem;
+    --space-lg:          1.5rem;
+    --space-xl:          2rem;
+    --space-2xl:         3rem;
+
+    /* Border Radius */
+    --radius-sm:         6px;
+    --radius-md:         10px;
+    --radius-lg:         16px;
+    --radius-full:       999px;
+
+    /* Transitions */
+    --transition-fast:   0.15s ease;
+    --transition-normal: 0.3s ease;
+
+    /* Layout */
+    --max-width:         800px;
+}
+
+/* ── Dark Mode ──────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+    --bg-main:           #0f172a;
+    --bg-card:           #1e293b;
+    --bg-input:          #334155;
+    --bg-input-focus:    #3b4b63;
+    --text-main:         #f8fafc;
+    --text-secondary:    #cbd5e1;
+    --text-muted:        #94a3b8;
+    --border:            #475569;
+    --border-focus:      #818cf8;
+    --success-bg:        #052e16;
+    --error-bg:          #450a0a;
+    --warning-bg:        #422006;
+    --shadow-main:       0 10px 25px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────────── */
+html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: var(--font-main);
+    font-size: var(--fs-md);
+    line-height: var(--line-height);
+    transition: background-color var(--transition-normal),
+                color var(--transition-normal);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+.container {
+    width: 100%;
+    max-width: var(--max-width);
+    padding: var(--space-xl);
+}
+
+/* ── Card ───────────────────────────────────────────────────────────────────── */
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    box-shadow: var(--shadow-main);
+}
+
+/* ── Button ─────────────────────────────────────────────────────────────────── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--primary);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: var(--fs-md);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    transition: background var(--transition-fast),
+                transform var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+
+.btn:hover {
+    background: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-main);
+}
+
+.btn:active {
+    transform: translateY(0);
+}
+
+.btn:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+}
+
+.btn--secondary {
+    background: transparent;
+    color: var(--primary);
+    border: 2px solid var(--primary);
+}
+
+.btn--secondary:hover {
+    background: var(--primary);
+    color: #ffffff;
+}
+
+/* ── Input ──────────────────────────────────────────────────────────────────── */
+.input {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-input);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: var(--fs-md);
+    font-family: var(--font-main);
+    transition: border-color var(--transition-fast),
+                box-shadow var(--transition-fast);
+}
+
+.input:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: var(--shadow-focus);
+    background: var(--bg-input-focus);
+}
+
+/* ── Theme Toggle ───────────────────────────────────────────────────────────── */
+.theme-toggle {
+    position: fixed;
+    top: var(--space-md);
+    right: var(--space-md);
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    cursor: pointer;
+    font-size: var(--fs-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-sm);
+    transition: background var(--transition-fast),
+                border-color var(--transition-fast),
+                transform var(--transition-fast);
+    z-index: 100;
+}
+
+.theme-toggle:hover {
+    transform: scale(1.1);
+}
+
+/* ── Utility ────────────────────────────────────────────────────────────────── */
+.hidden    { display: none !important; }
+.sr-only   { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+.text-muted { color: var(--text-muted); }
+.text-center { text-align: center; }
+.mt-md     { margin-top: var(--space-md); }
+.mt-lg     { margin-top: var(--space-lg); }
+.gap-md    { gap: var(--space-md); }
+.flex      { display: flex; }
+.flex-col  { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
