@@ -51,12 +51,7 @@ git_push_workflow() {
     local project_name
     project_name=$(jq -r '.projects[] | select(.status == "active") | .name' \
         "$PROJECTS_REGISTRY" 2>/dev/null \
-        | fzf --prompt="  Select project: " \
-              --pointer="▸" \
-              --height=8 \
-              --border=rounded \
-              --color="prompt:cyan,pointer:green" \
-              --no-info 2>/dev/null)
+        | _fzf_pick "Select project:" 8)
 
     if [ -z "$project_name" ]; then
         log_warn "No project selected."

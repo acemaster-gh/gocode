@@ -4,7 +4,6 @@
 # gocode v1.0.2
 # =============================================================================
 
-# ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -15,7 +14,6 @@ BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# ── Banner ────────────────────────────────────────────────────────────────────
 print_banner() {
     echo -e "${CYAN}${BOLD}"
     echo "  ██████╗  ██████╗  ██████╗ ██████╗ ██████╗ ███████╗"
@@ -28,7 +26,6 @@ print_banner() {
     echo ""
 }
 
-# ── Log functions ─────────────────────────────────────────────────────────────
 log_info()  { echo -e "${BLUE}[INFO]${RESET}  $1"; }
 log_ok()    { echo -e "${GREEN}[OK]${RESET}    $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${RESET}  $1"; }
@@ -37,7 +34,6 @@ log_step()  { echo -e "${CYAN}[....] ${BOLD}$1${RESET}"; }
 log_done()  { echo -e "${GREEN}[DONE] ${BOLD}$1${RESET}"; }
 divider()   { echo -e "${DIM}────────────────────────────────────────────────────${RESET}"; }
 
-# ── Confirm prompt ────────────────────────────────────────────────────────────
 confirm() {
     local prompt="$1"
     read -rp "$(echo -e "${YELLOW}[?]${RESET} $prompt [y/N]: ")" answer
@@ -73,12 +69,8 @@ spinner_stop() {
 
 # ── Summary box ───────────────────────────────────────────────────────────────
 print_summary_box() {
-    local project_name="$1"
-    local project_type="$2"
-    local project_path="$3"
-    local repo_url="$4"
-    local netlify_url="$5"
-
+    local project_name="$1" project_type="$2"
+    local project_path="$3" repo_url="$4" netlify_url="$5"
     echo ""
     echo -e "${GREEN}${BOLD}┌─────────────────────────────────────────────────┐${RESET}"
     echo -e "${GREEN}${BOLD}│  ✓ Project Ready                                │${RESET}"
@@ -92,55 +84,57 @@ print_summary_box() {
     echo ""
 }
 
-# ── fzf-based project type selector ──────────────────────────────────────────
+# ── fzf wrapper — writes to tempfile, avoids $() TTY swallow ─────────────────
+_fzf_pick() {
+    local prompt="$1"
+    local height="${2:-10}"
+    local header="${3:-}"
+    local color="${4:-prompt:cyan,pointer:green,hl:yellow}"
+    local tmpfile
+    tmpfile=$(mktemp)
+
+    local fzf_args=(
+        --prompt="  $prompt "
+        --pointer="▸"
+        --height="$height"
+        --border=rounded
+        --color="$color"
+        --no-info
+    )
+    [ -n "$header" ] && fzf_args+=(--header="  $header")
+
+    fzf "${fzf_args[@]}" > "$tmpfile"
+    local result
+    result=$(cat "$tmpfile")
+    rm -f "$tmpfile"
+    echo "$result"
+}
+
+# ── Project type selector ─────────────────────────────────────────────────────
 select_project_type() {
     local selected
     selected=$(printf "Vanilla JS\nTailwind CSS\nReact + Vite" \
-        | fzf --ansi \
-              --prompt="  Project type: " \
-              --pointer="▸" \
-              --height=6 \
-              --border=rounded \
-              --color="prompt:cyan,pointer:green,hl:yellow" \
-              --no-info \
-              2>/dev/null)
-
+        | _fzf_pick "Project type:" 6)
     case "$selected" in
-        "Vanilla JS")    echo "vanilla" ;;
-        "Tailwind CSS")  echo "tailwind" ;;
-        "React + Vite")  echo "react" ;;
-        *)               echo "vanilla" ;;
+        "Vanilla JS")   echo "vanilla" ;;
+        "Tailwind CSS") echo "tailwind" ;;
+        "React + Vite") echo "react" ;;
+        *)              echo "vanilla" ;;
     esac
 }
 
-# ── fzf-based commit type selector ───────────────────────────────────────────
+# ── Commit type selector ──────────────────────────────────────────────────────
 select_commit_type() {
     local selected
     selected=$(printf "feat: new feature\nfix: bug fix\ndocs: documentation\nstyle: formatting\nrefactor: code restructure\nperf: performance\ntest: tests\nchore: maintenance" \
-        | fzf --ansi \
-              --prompt="  Commit type: " \
-              --pointer="▸" \
-              --height=12 \
-              --border=rounded \
-              --color="prompt:cyan,pointer:green" \
-              --no-info \
-              2>/dev/null)
-
+        | _fzf_pick "Commit type:" 12)
     echo "$selected" | cut -d: -f1
 }
 
-# ── fzf-based project selector from list ─────────────────────────────────────
+# ── Generic list picker ───────────────────────────────────────────────────────
 select_from_list() {
     local prompt="$1"
-    shift
-    local items=("$@")
-    printf '%s\n' "${items[@]}" \
-        | fzf --ansi \
-              --prompt="  $prompt " \
-              --pointer="▸" \
-              --height=12 \
-              --border=rounded \
-              --color="prompt:cyan,pointer:green,hl:yellow" \
-              --no-info \
-              2>/dev/null
+    local header="$2"
+    shift 2
+    printf '%s\n' "$@" | _fzf_pick "$prompt" 15 "$header"
 }

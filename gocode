@@ -228,13 +228,7 @@ delete_project() {
 
     local selected
     selected=$(printf '%s\n' "${active[@]}" "${completed[@]}" \
-        | fzf --prompt="  Delete project: " \
-              --pointer="▸" \
-              --height=12 \
-              --border=rounded \
-              --color="prompt:red,pointer:red" \
-              --header="  ⚠ This deletes local folder, GitHub repo, and registry entry" \
-              --no-info 2>/dev/null)
+        | _fzf_pick "Delete project:" 12 "⚠ Deletes folder, GitHub repo, and registry" "prompt:red,pointer:red")
 
     [ -z "$selected" ] && return
 
@@ -310,13 +304,7 @@ show_resume_menu() {
 
     local selected
     selected=$(printf '%s\n' "${display_items[@]}" \
-        | fzf --prompt="  Select: " \
-              --pointer="▸" \
-              --height=15 \
-              --border=rounded \
-              --color="prompt:cyan,pointer:green,hl:yellow" \
-              --header="  gocode v1.0.2 — Active Projects" \
-              --no-info 2>/dev/null)
+        | _fzf_pick "Select:" 15 "gocode v1.0.2 — Active Projects")
 
     [ -z "$selected" ] && exit 0
 
@@ -344,12 +332,7 @@ show_complete_menu() {
 
     local selected
     selected=$(printf '%s\n' "${active_projects[@]}" \
-        | fzf --prompt="  Mark complete: " \
-              --pointer="▸" \
-              --height=10 \
-              --border=rounded \
-              --color="prompt:green,pointer:green" \
-              --no-info 2>/dev/null)
+        | _fzf_pick "Mark complete:" 10 "" "prompt:green,pointer:green")
 
     [ -z "$selected" ] && return
 
