@@ -79,8 +79,8 @@ Every time you start a new project you do the same things manually — create a 
 - 10 second delay after VS Code opens
 
 ### Obsidian Integration
-- Daily note in `05-DAILY-NOTES/YYYY-MM-DD.md` — appended on every create/resume
-- Individual project note in `01-PROJECTS/Active/` with repo URL, Netlify URL, task list, session log
+- Daily note in `DAILY-NOTES/YYYY-MM-DD.md` — appended on every create/resume
+- Individual project note in `PROJECTS/Active/` with repo URL, Netlify URL, task list, session log
 - Notes marked complete when project is marked done
 
 ### Plugin System
@@ -191,12 +191,12 @@ init();
 First run triggers a setup wizard that auto-detects your GitHub username and Chrome binary. Config is saved to `~/.devsession/config.sh` — edit it anytime:
 
 ```bash
-GH_USER="your-github-username"
-PROJECTS_DIR="$HOME/Desktop/js-projects"
-CHROME_BIN="google-chrome"
-CHROME_PROFILE="Default"
-SLEEP_BEFORE_CHROME=10
-OBSIDIAN_VAULT="$HOME/Desktop/DevMaster-Vault"
+GH_USER="your-github-username"          # auto-detected from gh CLI
+PROJECTS_DIR="$HOME/Desktop/js-projects" # where projects are created
+CHROME_BIN="google-chrome"              # auto-detected
+CHROME_PROFILE="Default"                # your Chrome profile name
+SLEEP_BEFORE_CHROME=10                  # seconds before browser opens
+OBSIDIAN_VAULT="$HOME/your-vault-name"  # path to your Obsidian vault
 
 BROWSER_TABS=(
     "https://chatgpt.com"
