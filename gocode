@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # gocode — Personal Developer Workflow System
-# Version: 1.0.1
+# Version: 1.0.2
 # Location: ~/.gocode/gocode
 # =============================================================================
 
-# ── Resolve gocode root dir ───────────────────────────────────────────────────
 GOCODE_DIR="$HOME/.gocode"
 LIB_DIR="$GOCODE_DIR/lib"
 BOILERPLATES_DIR="$GOCODE_DIR/boilerplates"
@@ -20,6 +19,8 @@ source "$LIB_DIR/git.sh"
 source "$LIB_DIR/browser.sh"
 source "$LIB_DIR/netlify.sh"
 source "$LIB_DIR/obsidian.sh"
+source "$LIB_DIR/colors.sh"
+source "$LIB_DIR/readme_gen.sh"
 
 # ── Auto-load plugins ─────────────────────────────────────────────────────────
 if [ -d "$PLUGINS_DIR" ]; then
@@ -38,48 +39,25 @@ inject_boilerplate() {
     local template_dir="$BOILERPLATES_DIR/$project_type"
 
     if [ ! -d "$template_dir" ]; then
-        log_warn "No boilerplate found for type: $project_type — falling back to vanilla."
+        log_warn "No boilerplate found for: $project_type — using vanilla."
         template_dir="$BOILERPLATES_DIR/vanilla"
     fi
 
-    # Copy all template files
-    cp "$template_dir"/* . 2>/dev/null
+    # Copy template files — exclude .sh scripts
+    for f in "$template_dir"/*.html "$template_dir"/*.css "$template_dir"/*.js; do
+        [ -f "$f" ] && cp "$f" .
+    done
 
-    # Replace PROJECT_NAME placeholder in all files
+    # Replace PROJECT_NAME placeholder
     for file in index.html style.css script.js; do
         [ -f "$file" ] && sed -i "s/PROJECT_NAME/$project_name/g" "$file"
     done
 
+    # Generate and inject random color palette
+    generate_palette
+    inject_palette "style.css"
+
     log_ok "Boilerplate injected: $project_type"
-}
-
-inject_readme() {
-    local project_name="$1"
-    local project_type="$2"
-    local repo_url="$3"
-    local netlify_url="${4:-not-deployed}"
-    local date
-    date=$(date +%Y-%m-%d)
-
-    cat > README.md <<EOF
-# $project_name
-
-> Started: $date | Stack: $project_type
-
-## Description
-
-
-## Live Demo
-${netlify_url:-not deployed yet}
-
-## Repo
-$repo_url
-
-## Built With
-- HTML
-- CSS $([ "$project_type" = "tailwind" ] && echo "(Tailwind CSS)")
-- JavaScript (Vanilla)
-EOF
 }
 
 # =============================================================================
@@ -112,42 +90,64 @@ create_project() {
         break
     done
 
-    # ── Project type ──────────────────────────────────────────────────────────
+    # ── Project type — arrow key selection ───────────────────────────────────
     local project_type
     project_type=$(select_project_type)
 
+    # ── React scaffold ────────────────────────────────────────────────────────
     if [ "$project_type" = "react" ]; then
-        log_warn "React + Vite support is coming in gocode v1.0.2."
-        log_info "Falling back to vanilla for now."
-        project_type="vanilla"
+        local project_path="$PROJECTS_DIR/$project_name"
+        source "$BOILERPLATES_DIR/react/scaffold.sh"
+        scaffold_react "$project_name" "$project_path"
+        if [ $? -ne 0 ]; then
+            log_error "React scaffold failed. Falling back to vanilla."
+            project_type="vanilla"
+        else
+            # Git + GitHub + Netlify for React
+            cd "$project_path" || exit 1
+            git_init_and_commit
+            local repo_url
+            repo_url=$(github_create_repo "$project_name")
+            netlify_deploy "$project_name" "$project_path" "$repo_url"
+            local netlify_url="${NETLIFY_URL:-not-deployed}"
+            generate_project_readme "$project_name" "$project_type" "$repo_url" "$netlify_url"
+            git_push_final "$repo_url"
+            add_project_to_registry "$project_name" "$project_path" "$project_type" "$repo_url" "$netlify_url"
+            obsidian_daily_log "$project_name" "$repo_url" "$netlify_url"
+            obsidian_project_note "$project_name" "$repo_url" "$netlify_url" "$project_type"
+            print_summary_box "$project_name" "$project_type" "$project_path" "$repo_url" "$netlify_url"
+            log_step "Opening VS Code..."
+            code "$project_path"
+            browser_open_tabs &
+            return 0
+        fi
     fi
 
     # ── GitHub similar projects search ────────────────────────────────────────
     github_search_similar "$project_name"
 
-    # ── Create folder + inject boilerplate ───────────────────────────────────
+    # ── Create folder ─────────────────────────────────────────────────────────
     local project_path="$PROJECTS_DIR/$project_name"
     mkdir -p "$project_path"
     cd "$project_path" || exit 1
 
+    # ── Inject boilerplate + random palette ───────────────────────────────────
     log_step "Creating project files..."
     inject_boilerplate "$project_name" "$project_type"
-    inject_readme "$project_name" "$project_type" "pending" "not-deployed"
-    log_ok "Project files ready."
 
     # ── Git init + commit ─────────────────────────────────────────────────────
     git_init_and_commit
 
-    # ── GitHub repo — must run before Netlify ─────────────────────────────────
+    # ── GitHub repo ───────────────────────────────────────────────────────────
     local repo_url
     repo_url=$(github_create_repo "$project_name")
 
-    # ── Netlify deploy + link ─────────────────────────────────────────────────
+    # ── Netlify deploy + verified link ────────────────────────────────────────
     netlify_deploy "$project_name" "$project_path" "$repo_url"
     local netlify_url="${NETLIFY_URL:-not-deployed}"
 
-    # ── Update README with real URLs + final push ─────────────────────────────
-    inject_readme "$project_name" "$project_type" "$repo_url" "$netlify_url"
+    # ── Generate README ───────────────────────────────────────────────────────
+    generate_project_readme "$project_name" "$project_type" "$repo_url" "$netlify_url"
     git_push_final "$repo_url"
 
     # ── Save to registry ──────────────────────────────────────────────────────
@@ -159,15 +159,8 @@ create_project() {
     obsidian_daily_log "$project_name" "$repo_url" "$netlify_url"
     obsidian_project_note "$project_name" "$repo_url" "$netlify_url" "$project_type"
 
-    # ── Summary — all values ready here ──────────────────────────────────────
-    divider
-    log_done "Project '$project_name' is ready."
-    divider
-    echo -e "  ${GREEN}Type:${RESET}    $project_type"
-    echo -e "  ${GREEN}Folder:${RESET}  $project_path"
-    echo -e "  ${GREEN}Repo:${RESET}    $repo_url"
-    echo -e "  ${GREEN}Netlify:${RESET} $netlify_url"
-    divider
+    # ── Summary box ───────────────────────────────────────────────────────────
+    print_summary_box "$project_name" "$project_type" "$project_path" "$repo_url" "$netlify_url"
 
     # ── Open VS Code + browser ────────────────────────────────────────────────
     log_step "Opening VS Code..."
@@ -210,6 +203,86 @@ resume_project() {
 }
 
 # =============================================================================
+# DELETE PROJECT
+# =============================================================================
+
+delete_project() {
+    local active=()
+    local completed=()
+    local all_names=()
+
+    while IFS= read -r name; do
+        active+=("$name (active)")
+        all_names+=("$name")
+    done < <(jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY" 2>/dev/null)
+
+    while IFS= read -r name; do
+        completed+=("$name (completed)")
+        all_names+=("$name")
+    done < <(jq -r '.projects[] | select(.status == "completed") | .name' "$PROJECTS_REGISTRY" 2>/dev/null)
+
+    if [ ${#all_names[@]} -eq 0 ]; then
+        log_info "No projects to delete."
+        return
+    fi
+
+    local selected
+    selected=$(printf '%s\n' "${active[@]}" "${completed[@]}" \
+        | fzf --prompt="  Delete project: " \
+              --pointer="▸" \
+              --height=12 \
+              --border=rounded \
+              --color="prompt:red,pointer:red" \
+              --header="  ⚠ This deletes local folder, GitHub repo, and registry entry" \
+              --no-info 2>/dev/null)
+
+    [ -z "$selected" ] && return
+
+    # Strip status suffix
+    local project_name
+    project_name=$(echo "$selected" | sed 's/ (active)//;s/ (completed)//')
+
+    local project_path repo_url
+    project_path=$(get_project_field "$project_name" "path")
+    repo_url=$(get_project_field "$project_name" "repo_url")
+
+    divider
+    log_warn "About to delete: $project_name"
+    echo -e "  ${DIM}Folder:  $project_path${RESET}"
+    echo -e "  ${DIM}Repo:    $repo_url${RESET}"
+    divider
+
+    if ! confirm "Are you sure? This cannot be undone."; then
+        log_info "Cancelled."
+        return
+    fi
+
+    # Delete local folder
+    if [ -d "$project_path" ]; then
+        rm -rf "$project_path"
+        log_ok "Local folder deleted."
+    fi
+
+    # Delete GitHub repo
+    if [[ "$repo_url" != "local-only" && -n "$repo_url" ]]; then
+        spinner_start "Deleting GitHub repo..."
+        gh repo delete "$project_name" --yes &>/dev/null
+        spinner_stop
+        log_ok "GitHub repo deleted."
+    fi
+
+    # Remove from registry
+    local updated
+    updated=$(jq --arg name "$project_name" \
+        '.projects = [.projects[] | select(.name != $name)]' \
+        "$PROJECTS_REGISTRY")
+    echo "$updated" > "$PROJECTS_REGISTRY"
+    log_ok "Removed from registry."
+
+    log_done "Project '$project_name' deleted."
+}
+
+# =============================================================================
 # MENUS
 # =============================================================================
 
@@ -219,48 +292,45 @@ show_resume_menu() {
         active_projects+=("$name")
     done < <(get_incomplete_projects)
 
-    if [ ${#active_projects[@]} -eq 0 ]; then
-        return 1
-    fi
+    [ ${#active_projects[@]} -eq 0 ] && return 1
 
-    divider
-    echo -e "  ${BOLD}Active Projects:${RESET}"
-    divider
-    for i in "${!active_projects[@]}"; do
-        local proj="${active_projects[$i]}"
-        local last type repo
+    # Build display list with metadata
+    local display_items=()
+    for proj in "${active_projects[@]}"; do
+        local last type
         last=$(get_project_field "$proj" "last_opened")
         type=$(get_project_field "$proj" "type")
-        repo=$(get_project_field "$proj" "repo_url")
-        echo -e "  ${CYAN}$((i+1))${RESET}. ${BOLD}$proj${RESET} ${DIM}[$type]${RESET} — last opened: $last"
-        echo -e "     ${DIM}$repo${RESET}"
+        display_items+=("$proj  [$type]  last opened: $last")
     done
-    echo ""
-    echo -e "  ${CYAN}N${RESET}. New project"
-    echo -e "  ${CYAN}C${RESET}. Mark project complete"
-    echo -e "  ${CYAN}S${RESET}. Status dashboard"
-    echo -e "  ${CYAN}Q${RESET}. Quit"
-    divider
 
-    local choice
-    read -rp "$(echo -e "${YELLOW}[?]${RESET} Choice: ")" choice
+    display_items+=("── New project")
+    display_items+=("── Mark project complete")
+    display_items+=("── Delete a project")
+    display_items+=("── Status dashboard")
 
-    case "${choice,,}" in
-        n) return 2 ;;
-        c) show_complete_menu ;;
-        s) show_status; exit 0 ;;
-        q) exit 0 ;;
+    local selected
+    selected=$(printf '%s\n' "${display_items[@]}" \
+        | fzf --prompt="  Select: " \
+              --pointer="▸" \
+              --height=15 \
+              --border=rounded \
+              --color="prompt:cyan,pointer:green,hl:yellow" \
+              --header="  gocode v1.0.2 — Active Projects" \
+              --no-info 2>/dev/null)
+
+    [ -z "$selected" ] && exit 0
+
+    case "$selected" in
+        "── New project")              return 2 ;;
+        "── Mark project complete")    show_complete_menu; main_menu ;;
+        "── Delete a project")         delete_project; main_menu ;;
+        "── Status dashboard")         show_status; exit 0 ;;
         *)
-            if [[ "$choice" =~ ^[0-9]+$ ]] \
-                && [ "$choice" -gt 0 ] \
-                && [ "$choice" -le "${#active_projects[@]}" ]; then
-                resume_project "${active_projects[$((choice-1))]}"
-                exit 0
-            else
-                log_error "Invalid choice."
-                show_resume_menu
-            fi
-        ;;
+            local project_name
+            project_name=$(echo "$selected" | awk '{print $1}')
+            resume_project "$project_name"
+            exit 0
+            ;;
     esac
 }
 
@@ -270,30 +340,25 @@ show_complete_menu() {
         active_projects+=("$name")
     done < <(get_incomplete_projects)
 
-    if [ ${#active_projects[@]} -eq 0 ]; then
-        log_info "No active projects to mark complete."
-        return
-    fi
+    [ ${#active_projects[@]} -eq 0 ] && { log_info "No active projects."; return; }
 
-    echo ""
-    echo -e "${BOLD}Mark as completed:${RESET}"
-    for i in "${!active_projects[@]}"; do
-        echo -e "  ${CYAN}$((i+1))${RESET}. ${active_projects[$i]}"
-    done
-    echo ""
+    local selected
+    selected=$(printf '%s\n' "${active_projects[@]}" \
+        | fzf --prompt="  Mark complete: " \
+              --pointer="▸" \
+              --height=10 \
+              --border=rounded \
+              --color="prompt:green,pointer:green" \
+              --no-info 2>/dev/null)
 
-    local choice
-    read -rp "$(echo -e "${YELLOW}[?]${RESET} Enter number (0 to cancel): ")" choice
+    [ -z "$selected" ] && return
 
-    if [[ "$choice" =~ ^[0-9]+$ ]] \
-        && [ "$choice" -gt 0 ] \
-        && [ "$choice" -le "${#active_projects[@]}" ]; then
-        local selected="${active_projects[$((choice-1))]}"
-        mark_project_complete "$selected"
-        obsidian_complete "$selected"
-    else
-        log_info "Cancelled."
-    fi
+    mark_project_complete "$selected"
+    obsidian_complete "$selected"
+
+    local project_path
+    project_path=$(get_project_field "$selected" "path")
+    update_readme_on_complete "$project_path"
 }
 
 show_status() {
@@ -313,7 +378,7 @@ show_status() {
     if [ "$active" -gt 0 ]; then
         echo -e "  ${GREEN}${BOLD}ACTIVE${RESET}"
         jq -r '.projects[] | select(.status == "active") |
-            "  ▸ \(.name) [\(.type)] — \(.created)\n    \(.repo_url)"' \
+            "  ▸ \(.name) [\(.type // "vanilla")] — \(.created)\n    \(.repo_url)"' \
             "$PROJECTS_REGISTRY"
         echo ""
     fi
@@ -330,13 +395,10 @@ show_status() {
 
     divider
 
-    # Open today's Obsidian note
     local daily_note="$OBSIDIAN_VAULT/05-DAILY-NOTES/$(date +%Y-%m-%d).md"
     if [ -f "$daily_note" ]; then
         log_step "Opening Obsidian..."
         xdg-open "$daily_note" &>/dev/null &
-    else
-        log_warn "No Obsidian daily note for today yet."
     fi
 }
 
@@ -365,28 +427,41 @@ main_menu() {
 
 case "${1:-}" in
     --status|-s)
-        load_config
-        init_registry
-        show_status
-        ;;
+        load_config; init_registry; show_status ;;
     --complete|-c)
-        load_config
-        init_registry
-        show_complete_menu
-        ;;
+        load_config; init_registry; show_complete_menu ;;
+    --delete|-d)
+        load_config; init_registry; delete_project ;;
+    --push|-p)
+        load_config; init_registry; git_push_workflow ;;
+    --open|-o)
+        load_config; init_registry
+        last=$(get_last_active_project)
+        if [ -n "$last" ] && [ "$last" != "null" ]; then
+            resume_project "$last"
+        else
+            log_error "No active project found."
+        fi ;;
+    --deploy)
+        load_config; init_registry
+        last=$(get_last_active_project)
+        project_path=$(get_project_field "$last" "path")
+        netlify_redeploy "$project_path" ;;
     --config)
-        run_config_wizard
-        ;;
+        run_config_wizard ;;
     --update)
         log_step "Pulling latest gocode from GitHub..."
         cd "$GOCODE_DIR" && git pull -q \
             && log_done "gocode updated." \
-            || log_error "Update failed. Check your connection."
-        ;;
+            || log_error "Update failed." ;;
     --help|-h)
         print_banner
         echo -e "  ${BOLD}Usage:${RESET}"
         echo -e "    gocode               Start or resume a project"
+        echo -e "    gocode --push        Commit and push current project"
+        echo -e "    gocode --open        Reopen last active project instantly"
+        echo -e "    gocode --delete      Delete a project everywhere"
+        echo -e "    gocode --deploy      Redeploy last project to Netlify"
         echo -e "    gocode --status      Dashboard + open Obsidian"
         echo -e "    gocode --complete    Mark a project as completed"
         echo -e "    gocode --config      Re-run setup wizard"
@@ -398,10 +473,8 @@ case "${1:-}" in
         load_config
         check_dependencies
         init_registry
-        main_menu
-        ;;
+        main_menu ;;
     *)
         log_error "Unknown flag: $1. Run 'gocode --help'."
-        exit 1
-        ;;
+        exit 1 ;;
 esac

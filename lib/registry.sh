@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # registry.sh — Project registry: read/write ~/.devsession/projects.json
-# Part of gocode v1.0.1
+# gocode v1.0.2
 # =============================================================================
 
 SESSION_DIR="$HOME/.devsession"
@@ -12,17 +12,30 @@ init_registry() {
     if [ ! -f "$PROJECTS_REGISTRY" ]; then
         echo '{"projects":[]}' > "$PROJECTS_REGISTRY"
     fi
+    # Fix null type fields from older versions
+    _fix_null_types
+}
+
+# ── Patch old projects that have null type ────────────────────────────────────
+_fix_null_types() {
+    local updated
+    updated=$(jq '(.projects[] | select(.type == null) | .type) = "vanilla"' \
+        "$PROJECTS_REGISTRY" 2>/dev/null)
+    if [ -n "$updated" ]; then
+        echo "$updated" > "$PROJECTS_REGISTRY"
+    fi
 }
 
 get_incomplete_projects() {
-    jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY" 2>/dev/null
+    jq -r '.projects[] | select(.status == "active") | .name' \
+        "$PROJECTS_REGISTRY" 2>/dev/null
 }
 
 get_project_field() {
     local name="$1"
     local field="$2"
     jq -r --arg n "$name" --arg f "$field" \
-        '.projects[] | select(.name == $n) | .[$f]' \
+        '.projects[] | select(.name == $n) | .[$f] // "unknown"' \
         "$PROJECTS_REGISTRY" 2>/dev/null
 }
 
@@ -94,5 +107,10 @@ count_by_status() {
     local status="$1"
     jq --arg s "$status" \
         '[.projects[] | select(.status == $s)] | length' \
+        "$PROJECTS_REGISTRY" 2>/dev/null
+}
+
+get_last_active_project() {
+    jq -r '[.projects[] | select(.status == "active")] | sort_by(.last_opened) | reverse | .[0].name' \
         "$PROJECTS_REGISTRY" 2>/dev/null
 }
