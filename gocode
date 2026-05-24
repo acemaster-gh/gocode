@@ -1,463 +1,651 @@
 #!/usr/bin/env bash
 # =============================================================================
-# gocode — Personal Developer Workflow System
-# Version: 1.0.2
-# Location: ~/.gocode/gocode
+# gocode v1.0.3 — Developer Workflow System
+# UI: @clack/prompts (Node.js)   Logic: bash
 # =============================================================================
+set -euo pipefail
+trap 'spinner_stop 2>/dev/null; tput cnorm 2>/dev/null' EXIT
 
-GOCODE_DIR="$HOME/.gocode"
-LIB_DIR="$GOCODE_DIR/lib"
-BOILERPLATES_DIR="$GOCODE_DIR/boilerplates"
-PLUGINS_DIR="$GOCODE_DIR/plugins"
+GOCODE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+LIB="$GOCODE_DIR/lib"
 
-# ── Source all lib files ──────────────────────────────────────────────────────
-source "$LIB_DIR/ui.sh"
-source "$LIB_DIR/config.sh"
-source "$LIB_DIR/deps.sh"
-source "$LIB_DIR/registry.sh"
-source "$LIB_DIR/git.sh"
-source "$LIB_DIR/browser.sh"
-source "$LIB_DIR/netlify.sh"
-source "$LIB_DIR/obsidian.sh"
-source "$LIB_DIR/colors.sh"
-source "$LIB_DIR/readme_gen.sh"
+source "$LIB/ui.sh"
+source "$LIB/deps.sh"
+source "$LIB/config.sh"
+source "$LIB/registry.sh"
+source "$LIB/git.sh"
+source "$LIB/browser.sh"
+source "$LIB/netlify.sh"
+source "$LIB/obsidian.sh"
+source "$LIB/colors.sh"
+source "$LIB/readme_gen.sh"
 
-# ── Auto-load plugins ─────────────────────────────────────────────────────────
-if [ -d "$PLUGINS_DIR" ]; then
-    for plugin in "$PLUGINS_DIR"/*.sh; do
-        [ -f "$plugin" ] && source "$plugin"
-    done
-fi
+load_config
+init_registry
 
 # =============================================================================
-# BOILERPLATE INJECTION
+# CLACK HELPER — runs prompt.js, result goes to tempfile
+# Usage: clack_run <command> [json-arg]
+# Result available in $CLACK_RESULT as parsed JSON
 # =============================================================================
 
-inject_boilerplate() {
-    local project_name="$1"
-    local project_type="$2"
-    local template_dir="$BOILERPLATES_DIR/$project_type"
+clack_run() {
+    local cmd="$1"
+    local arg="${2:-}"
+    local tmpfile; tmpfile=$(mktemp)
 
-    if [ ! -d "$template_dir" ]; then
-        log_warn "No boilerplate found for: $project_type — using vanilla."
-        template_dir="$BOILERPLATES_DIR/vanilla"
+    GOCODE_RESULT_FILE="$tmpfile" node "$LIB/prompt.js" "$cmd" "$arg"
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        rm -f "$tmpfile"
+        exit 1
     fi
 
-    # Copy template files — exclude .sh scripts
-    for f in "$template_dir"/*.html "$template_dir"/*.css "$template_dir"/*.js; do
-        [ -f "$f" ] && cp "$f" .
-    done
+    CLACK_RESULT=$(cat "$tmpfile")
+    rm -f "$tmpfile"
+}
 
-    # Replace PROJECT_NAME placeholder
-    for file in index.html style.css script.js; do
-        [ -f "$file" ] && sed -i "s/PROJECT_NAME/$project_name/g" "$file"
-    done
+clack_log() { node "$LIB/prompt.js" "$1" "${@:2}" 2>/dev/null || true; }
 
-    # Generate and inject random color palette
-    generate_palette
-    inject_palette "style.css"
+# =============================================================================
+# HELPERS
+# =============================================================================
 
-    log_ok "Boilerplate injected: $project_type"
+_all_active_projects_json() {
+    jq -c '[.projects[] | select(.status=="active") | .name]' \
+        "$PROJECTS_REGISTRY" 2>/dev/null || echo '[]'
+}
+
+_all_projects_json() {
+    jq -c '[.projects[].name]' "$PROJECTS_REGISTRY" 2>/dev/null || echo '[]'
 }
 
 # =============================================================================
-# PROJECT CREATION
+# CREATE PROJECT
 # =============================================================================
 
 create_project() {
-    divider
-    log_step "New Project Setup"
-    divider
+    check_dependencies
 
-    # ── Project name ──────────────────────────────────────────────────────────
-    local project_name=""
-    while true; do
-        read -rp "$(echo -e "${YELLOW}[?]${RESET} Project name (e.g. tip-calculator): ")" project_name
-        project_name=$(echo "$project_name" \
-            | tr '[:upper:]' '[:lower:]' \
-            | tr ' ' '-' \
-            | tr -cd 'a-z0-9-')
+    # All prompts via @clack
+    clack_run "create"
 
-        if [ -z "$project_name" ]; then
-            log_error "Name cannot be empty."; continue
-        fi
-        if [ -d "$PROJECTS_DIR/$project_name" ]; then
-            log_error "Folder '$project_name' already exists."; continue
-        fi
-        if project_exists "$project_name"; then
-            log_error "Project '$project_name' already in registry."; continue
-        fi
-        break
-    done
+    local name description type create_github visibility deploy_netlify
+    name=$(echo          "$CLACK_RESULT" | jq -r '.name')
+    description=$(echo   "$CLACK_RESULT" | jq -r '.description')
+    type=$(echo          "$CLACK_RESULT" | jq -r '.type')
+    create_github=$(echo "$CLACK_RESULT" | jq -r '.create_github')
+    visibility=$(echo    "$CLACK_RESULT" | jq -r '.visibility')
+    deploy_netlify=$(echo "$CLACK_RESULT" | jq -r '.deploy_netlify')
 
-    # ── Project type — arrow key selection ───────────────────────────────────
-    local project_type
-    project_type=$(select_project_type)
-
-    # ── React scaffold ────────────────────────────────────────────────────────
-    if [ "$project_type" = "react" ]; then
-        local project_path="$PROJECTS_DIR/$project_name"
-        source "$BOILERPLATES_DIR/react/scaffold.sh"
-        scaffold_react "$project_name" "$project_path"
-        if [ $? -ne 0 ]; then
-            log_error "React scaffold failed. Falling back to vanilla."
-            project_type="vanilla"
-        else
-            # Git + GitHub + Netlify for React
-            cd "$project_path" || exit 1
-            git_init_and_commit
-            local repo_url
-            repo_url=$(github_create_repo "$project_name")
-            netlify_deploy "$project_name" "$project_path" "$repo_url"
-            local netlify_url="${NETLIFY_URL:-not-deployed}"
-            generate_project_readme "$project_name" "$project_type" "$repo_url" "$netlify_url"
-            git_push_final "$repo_url"
-            add_project_to_registry "$project_name" "$project_path" "$project_type" "$repo_url" "$netlify_url"
-            obsidian_daily_log "$project_name" "$repo_url" "$netlify_url"
-            obsidian_project_note "$project_name" "$repo_url" "$netlify_url" "$project_type"
-            print_summary_box "$project_name" "$project_type" "$project_path" "$repo_url" "$netlify_url"
-            log_step "Opening VS Code..."
-            code "$project_path"
-            browser_open_tabs &
-            return 0
-        fi
+    if project_exists "$name"; then
+        clack_log error "'${name}' already exists."; exit 1
     fi
 
-    # ── GitHub similar projects search ────────────────────────────────────────
-    github_search_similar "$project_name"
-
-    # ── Create folder ─────────────────────────────────────────────────────────
-    local project_path="$PROJECTS_DIR/$project_name"
+    # Scaffold
+    local project_path="$PROJECTS_DIR/$name"
     mkdir -p "$project_path"
-    cd "$project_path" || exit 1
+    clack_log ok "Created: ${project_path}"
 
-    # ── Inject boilerplate + random palette ───────────────────────────────────
-    log_step "Creating project files..."
-    inject_boilerplate "$project_name" "$project_type"
+    _inject_boilerplate "$type" "$project_path"
 
-    # ── Git init + commit ─────────────────────────────────────────────────────
+    if command -v python3 &>/dev/null; then
+        generate_palette
+        inject_palette "$project_path/style.css"
+    fi
+
+    cd "$project_path"
     git_init_and_commit
 
-    # ── GitHub repo ───────────────────────────────────────────────────────────
-    local repo_url
-    repo_url=$(github_create_repo "$project_name")
+    # Background: search similar repos
+    github_search_similar "$name" &
 
-    # ── Netlify deploy + verified link ────────────────────────────────────────
-    netlify_deploy "$project_name" "$project_path" "$repo_url"
-    local netlify_url="${NETLIFY_URL:-not-deployed}"
+    # GitHub
+    local repo_url="local-only"
+    [ "$create_github" = "true" ] && repo_url=$(github_create_repo "$name" "$visibility")
 
-    # ── Generate README ───────────────────────────────────────────────────────
-    generate_project_readme "$project_name" "$project_type" "$repo_url" "$netlify_url"
+    # Netlify
+    local netlify_url="not-deployed"
+    [ "$deploy_netlify" = "true" ] && \
+        netlify_url=$(netlify_deploy "$name" "$project_path" "$repo_url")
+
+    # README
+    generate_project_readme "$name" "$type" "$project_path" \
+        "$repo_url" "$netlify_url" "$description"
+
     git_push_final "$repo_url"
 
-    # ── Save to registry ──────────────────────────────────────────────────────
-    add_project_to_registry \
-        "$project_name" "$project_path" "$project_type" "$repo_url" "$netlify_url"
+    # Registry
+    add_project_to_registry "$name" "$project_path" "$type" \
+        "$repo_url" "$netlify_url" "$description"
 
-    # ── Obsidian notes ────────────────────────────────────────────────────────
-    log_step "Writing Obsidian notes..."
-    obsidian_daily_log "$project_name" "$repo_url" "$netlify_url"
-    obsidian_project_note "$project_name" "$repo_url" "$netlify_url" "$project_type"
+    # Obsidian
+    {
+        obsidian_project_note "$name" "$type" "$repo_url" "$netlify_url" "$description"
+        obsidian_daily_log "Created: ${name}"
+    } &
 
-    # ── Summary box ───────────────────────────────────────────────────────────
-    print_summary_box "$project_name" "$project_type" "$project_path" "$repo_url" "$netlify_url"
+    # Summary
 
-    # ── Open VS Code + browser ────────────────────────────────────────────────
-    log_step "Opening VS Code..."
-    code "$project_path"
-    browser_open_tabs &
+    # Open tools
+    code "$project_path" &>/dev/null &
+    { [ "$netlify_url" != "not-deployed" ] && browser_open_tabs "$netlify_url" || browser_open_tabs ""; } &
+
+    # Final @clack summary
+    node "$LIB/prompt.js" outro-create \
+        "$name" "$type" "$project_path" "$repo_url" "$netlify_url"
+}
+
+_inject_boilerplate() {
+    local type="$1" dest="$2"
+    local src="$GOCODE_DIR/boilerplates/${type}"
+    if [ "$type" = "react" ]; then
+        spinner_start "Scaffolding React + Vite..."
+        bash "$src/scaffold.sh" "$dest" 2>/dev/null
+        spinner_stop; clack_log ok "React + Vite scaffolded."
+        return
+    fi
+    if [ -d "$src" ]; then
+        cp -r "$src/." "$dest/"
+        clack_log ok "Boilerplate injected (${type})."
+    fi
 }
 
 # =============================================================================
-# RESUME PROJECT
+# RESUME
 # =============================================================================
 
 resume_project() {
-    local project_name="$1"
-    local project_path
-    project_path=$(get_project_field "$project_name" "path")
+    check_dependencies
+    local active_json; active_json=$(_all_active_projects_json)
 
-    if [ ! -d "$project_path" ]; then
-        log_error "Project folder not found: $project_path"
-        return 1
+    if [ "$active_json" = "[]" ]; then
+        clack_log info "No active projects. Create one: gocode --new"
+        exit 0
     fi
 
-    log_step "Resuming: $project_name"
-    update_last_opened "$project_name"
+    clack_run "resume" "$active_json"
 
-    local repo_url netlify_url
-    repo_url=$(get_project_field "$project_name" "repo_url")
-    netlify_url=$(get_project_field "$project_name" "netlify_url")
+    local chosen; chosen=$(echo "$CLACK_RESULT" | jq -r '.name')
+    local path; path=$(get_project_field "$chosen" "path")
 
-    obsidian_daily_log "$project_name" "$repo_url" "$netlify_url"
+    if [ -d "$path/.git" ]; then
+        local dirty; dirty=$(cd "$path" && git status --short 2>/dev/null | wc -l)
+        [ "$dirty" -gt 0 ] && clack_log warn "${dirty} uncommitted change(s) in ${chosen}"
+    fi
 
-    log_step "Opening VS Code..."
-    code "$project_path"
-    browser_open_tabs &
-
-    divider
-    log_done "Resumed: $project_name"
-    echo -e "  ${GREEN}Repo:${RESET}    $repo_url"
-    echo -e "  ${GREEN}Netlify:${RESET} $netlify_url"
-    divider
+    update_last_opened "$chosen"
+    obsidian_daily_log "Resumed: ${chosen}" &
+    code "$path" &>/dev/null &
+    clack_log ok "Opened: ${chosen}"
 }
 
 # =============================================================================
-# DELETE PROJECT
+# PUSH
 # =============================================================================
 
-delete_project() {
-    local active=()
-    local completed=()
-    local all_names=()
+cmd_push() {
+    local name; name=$(jq -r '[.projects[] | select(.status=="active") | .name] | .[0]' \
+        "$PROJECTS_REGISTRY" 2>/dev/null)
 
-    while IFS= read -r name; do
-        active+=("$name (active)")
-        all_names+=("$name")
-    done < <(jq -r '.projects[] | select(.status == "active") | .name' "$PROJECTS_REGISTRY" 2>/dev/null)
+    clack_run "push" "${name:-}"
 
-    while IFS= read -r name; do
-        completed+=("$name (completed)")
-        all_names+=("$name")
-    done < <(jq -r '.projects[] | select(.status == "completed") | .name' "$PROJECTS_REGISTRY" 2>/dev/null)
+    local commit_type commit_msg
+    commit_type=$(echo "$CLACK_RESULT" | jq -r '.type')
+    commit_msg=$(echo  "$CLACK_RESULT" | jq -r '.message')
 
-    if [ ${#all_names[@]} -eq 0 ]; then
-        log_info "No projects to delete."
-        return
+    local path; path=$(get_project_field "${name:-}" "path")
+    cd "${path:-.}"
+
+    if git diff --quiet && git diff --cached --quiet; then
+        clack_log warn "Nothing to commit."; return
     fi
 
-    local selected
-    selected=$(printf '%s\n' "${active[@]}" "${completed[@]}" \
-        | _fzf_pick "Delete project:" 12 "⚠ Deletes folder, GitHub repo, and registry" "prompt:red,pointer:red")
+    git add .
+    git commit -m "${commit_type}: ${commit_msg}" -q
+    spinner_start "Pushing..."
+    git push -q 2>/dev/null
+    spinner_stop
+    clack_log ok "Pushed: ${commit_type}: ${commit_msg}"
+}
 
-    [ -z "$selected" ] && return
+# =============================================================================
+# DELETE
+# =============================================================================
 
-    # Strip status suffix
-    local project_name
-    project_name=$(echo "$selected" | sed 's/ (active)//;s/ (completed)//')
+cmd_delete() {
+    local active_json; active_json=$(_all_projects_json)
+    clack_run "delete" "$active_json"
 
-    local project_path repo_url
-    project_path=$(get_project_field "$project_name" "path")
-    repo_url=$(get_project_field "$project_name" "repo_url")
+    local name delete_github
+    name=$(echo          "$CLACK_RESULT" | jq -r '.name')
+    delete_github=$(echo "$CLACK_RESULT" | jq -r '.delete_github')
 
-    divider
-    log_warn "About to delete: $project_name"
-    echo -e "  ${DIM}Folder:  $project_path${RESET}"
-    echo -e "  ${DIM}Repo:    $repo_url${RESET}"
-    divider
+    local path; path=$(get_project_field "$name" "path")
+    local repo; repo=$(get_project_field "$name" "repo_url")
 
-    if ! confirm "Are you sure? This cannot be undone."; then
-        log_info "Cancelled."
-        return
-    fi
-
-    # Delete local folder
-    if [ -d "$project_path" ]; then
-        rm -rf "$project_path"
-        log_ok "Local folder deleted."
+    # Delete folder
+    if [ -d "$path" ]; then
+        rm -rf "$path"
+        clack_log ok "Folder deleted."
+    else
+        clack_log warn "Folder not found: ${path}"
     fi
 
     # Delete GitHub repo
-    if [[ "$repo_url" != "local-only" && -n "$repo_url" ]]; then
+    if [ "$delete_github" = "true" ] && [ "$repo" != "local-only" ]; then
         spinner_start "Deleting GitHub repo..."
-        gh repo delete "$project_name" --yes &>/dev/null
-        spinner_stop
-        log_ok "GitHub repo deleted."
+        gh repo delete "${GH_USER}/${name}" --yes 2>/dev/null \
+            && { spinner_stop; clack_log ok "GitHub repo deleted."; } \
+            || { spinner_stop; clack_log warn "GitHub delete failed — remove manually."; }
     fi
 
     # Remove from registry
     local updated
-    updated=$(jq --arg name "$project_name" \
-        '.projects = [.projects[] | select(.name != $name)]' \
+    updated=$(jq --arg n "$name" 'del(.projects[] | select(.name==$n))' \
         "$PROJECTS_REGISTRY")
-    echo "$updated" > "$PROJECTS_REGISTRY"
-    log_ok "Removed from registry."
+    _registry_write "$updated"
+    clack_log ok "Removed from registry."
 
-    log_done "Project '$project_name' deleted."
+    # Remove Obsidian note
+    local note="${OBSIDIAN_VAULT:-}/gocode-projects/${name}.md"
+    [ -f "$note" ] && rm "$note" && clack_log ok "Obsidian note removed."
+
+    clack_log outro "Deleted: ${name}"
 }
 
 # =============================================================================
-# MENUS
+# EDIT
 # =============================================================================
 
-show_resume_menu() {
-    local active_projects=()
-    while IFS= read -r name; do
-        active_projects+=("$name")
-    done < <(get_incomplete_projects)
+cmd_edit() {
+    local active_json; active_json=$(_all_projects_json)
+    clack_run "edit" "$active_json"
 
-    [ ${#active_projects[@]} -eq 0 ] && return 1
+    local name field value
+    name=$(echo  "$CLACK_RESULT" | jq -r '.name')
+    field=$(echo "$CLACK_RESULT" | jq -r '.field')
+    value=$(echo "$CLACK_RESULT" | jq -r '.value')
 
-    # Build display list with metadata
-    local display_items=()
-    for proj in "${active_projects[@]}"; do
-        local last type
-        last=$(get_project_field "$proj" "last_opened")
-        type=$(get_project_field "$proj" "type")
-        display_items+=("$proj  [$type]  last opened: $last")
-    done
+    case "$field" in
+        name)
+            local old_path; old_path=$(get_project_field "$name" "path")
+            local new_path; new_path="$(dirname "$old_path")/${value}"
+            mv "$old_path" "$new_path"; clack_log ok "Folder renamed."
 
-    display_items+=("── New project")
-    display_items+=("── Mark project complete")
-    display_items+=("── Delete a project")
-    display_items+=("── Status dashboard")
+            local old_repo; old_repo=$(get_project_field "$name" "repo_url")
+            local new_repo="local-only"
+            [ "$old_repo" != "local-only" ] && new_repo=$(github_rename_repo "$name" "$value")
 
-    local selected
-    selected=$(printf '%s\n' "${display_items[@]}" \
-        | _fzf_pick "Select:" 15 "gocode v1.0.2 — Active Projects")
+            local old_note="${OBSIDIAN_VAULT:-}/gocode-projects/${name}.md"
+            local new_note="${OBSIDIAN_VAULT:-}/gocode-projects/${value}.md"
+            [ -f "$old_note" ] && mv "$old_note" "$new_note" && clack_log ok "Obsidian note renamed."
 
-    [ -z "$selected" ] && exit 0
+            update_project_field "$name"  "name"     "$value"
+            update_project_field "$value" "path"     "$new_path"
+            [ "$new_repo" != "local-only" ] && update_project_field "$value" "repo_url" "$new_repo"
 
-    case "$selected" in
-        "── New project")              return 2 ;;
-        "── Mark project complete")    show_complete_menu; main_menu ;;
-        "── Delete a project")         delete_project; main_menu ;;
-        "── Status dashboard")         show_status; exit 0 ;;
-        *)
-            local project_name
-            project_name=$(echo "$selected" | awk '{print $1}')
-            resume_project "$project_name"
-            exit 0
+            clack_log outro "Renamed: ${name} → ${value}"
+            ;;
+
+        description)
+            update_project_field "$name" "description" "$value"
+
+            local repo; repo=$(get_project_field "$name" "repo_url")
+            [ "$repo" != "local-only" ] && github_set_description "$name" "$value"
+
+            local path; path=$(get_project_field "$name" "path")
+            [ -f "$path/README.md" ] && \
+                sed -i "s|^_Add a short description.*|${value}|" "$path/README.md" 2>/dev/null || true
+
+            local note="${OBSIDIAN_VAULT:-}/gocode-projects/${name}.md"
+            [ -f "$note" ] && \
+                sed -i "s|^\*\*Description:\*\*.*|**Description:** ${value}|" "$note" 2>/dev/null || true
+
+            clack_log outro "Description updated everywhere."
+            ;;
+
+        visibility)
+            github_set_visibility "$name" "$value"
+            update_project_field "$name" "visibility" "$value"
+            clack_log outro "Visibility set to: ${value}"
             ;;
     esac
 }
 
-show_complete_menu() {
-    local active_projects=()
-    while IFS= read -r name; do
-        active_projects+=("$name")
-    done < <(get_incomplete_projects)
+# =============================================================================
+# STATUS
+# =============================================================================
 
-    [ ${#active_projects[@]} -eq 0 ] && { log_info "No active projects."; return; }
+cmd_status() {
+    print_banner
+    local projects=()
+    mapfile -t projects < <(get_incomplete_projects)
+    [ ${#projects[@]} -eq 0 ] && log_error "No active projects." && exit 1
+    local name
+    [ ${#projects[@]} -eq 1 ] && name="${projects[0]}" || \
+        name=$(printf '%s\n' "${projects[@]}" | \
+            fzf --prompt="  Status for: " --height=10 --border=rounded --no-info 2>/dev/tty)
 
-    local selected
-    selected=$(printf '%s\n' "${active_projects[@]}" \
-        | _fzf_pick "Mark complete:" 10 "" "prompt:green,pointer:green")
+    local path;    path=$(get_project_field    "$name" "path")
+    local repo;    repo=$(get_project_field    "$name" "repo_url")
+    local netlify; netlify=$(get_project_field "$name" "netlify_url")
+    local type;    type=$(get_project_field    "$name" "type")
+    local created; created=$(get_project_field "$name" "created")
+    local desc;    desc=$(get_project_field    "$name" "description")
 
-    [ -z "$selected" ] && return
-
-    mark_project_complete "$selected"
-    obsidian_complete "$selected"
-
-    local project_path
-    project_path=$(get_project_field "$selected" "path")
-    update_readme_on_complete "$project_path"
+    divider
+    log_info "Project:  ${BOLD}${name}${RESET}"
+    log_info "Type:     ${type}"
+    log_info "Desc:     ${desc}"
+    log_info "Path:     ${path}"
+    log_info "Created:  ${created}"
+    [ "$repo" != "local-only" ]      && log_info "GitHub:   ${repo}"
+    [ "$netlify" != "not-deployed" ] && log_info "Live:     ${netlify}"
+    if [ -d "$path/.git" ]; then
+        local branch dirty
+        branch=$(cd "$path" && git branch --show-current 2>/dev/null || echo "?")
+        dirty=$(cd "$path" && git status --short 2>/dev/null | wc -l)
+        log_info "Branch:   ${branch}  |  Uncommitted: ${dirty}"
+    fi
+    divider
 }
 
-show_status() {
+# =============================================================================
+# LIST
+# =============================================================================
+
+cmd_list() {
+    print_banner
+    local rows
+    rows=$(jq -r '.projects[] | "\(.status)\t\(.name)\t\(.type)\t\(.created)"' \
+        "$PROJECTS_REGISTRY" 2>/dev/null)
+
+    [ -z "$rows" ] && log_info "No projects yet. Run: gocode --new" && return
+
+    echo ""
+    echo -e "  ${BOLD}${CYAN}STATUS     NAME                     TYPE       CREATED${RESET}"
+    divider
+    while IFS=$'\t' read -r status pname ptype pcreated; do
+        local icon col
+        case "$status" in
+            active)    icon="●" col="$GREEN"  ;;
+            completed) icon="✓" col="$CYAN"   ;;
+            archived)  icon="○" col="$DIM"    ;;
+            *)         icon="?" col="$YELLOW" ;;
+        esac
+        printf "  %b%s%b  %-24s %-10s %s\n" \
+            "$col" "$icon" "$RESET" "$pname" "$ptype" "$pcreated"
+    done <<< "$rows"
+    divider
+    echo ""
+}
+
+# =============================================================================
+# LOG / DIFF / DEPLOY / COMPLETE / ARCHIVE / OPEN / STATS / BACKUP / DOCTOR
+# =============================================================================
+
+_pick_fzf() {
+    local prompt="$1"; shift
+    printf '%s\n' "$@" | \
+        fzf --prompt="  ${prompt} " --height=12 --border=rounded --no-info 2>/dev/tty
+}
+
+_pick_active() {
+    local prompt="$1"
+    local projects=()
+    mapfile -t projects < <(get_incomplete_projects)
+    [ ${#projects[@]} -eq 0 ] && log_error "No active projects." && exit 1
+    [ ${#projects[@]} -eq 1 ] && echo "${projects[0]}" && return
+    _pick_fzf "$prompt" "${projects[@]}"
+}
+
+cmd_log() {
+    local name; name=$(_pick_active "Show log for:")
+    local path; path=$(get_project_field "$name" "path")
+    echo ""; log_info "Last 10 commits — ${BOLD}${name}${RESET}:"
+    cd "$path" && git log --oneline -10 --color=always; echo ""
+}
+
+cmd_diff() {
+    local name; name=$(_pick_active "Show diff for:")
+    local path; path=$(get_project_field "$name" "path")
+    echo ""; cd "$path" && git diff --stat; echo ""
+}
+
+cmd_deploy() {
+    local name; name=$(_pick_active "Deploy:")
+    local path; path=$(get_project_field "$name" "path")
+    local url;  url=$(netlify_deploy "$name" "$path")
+    [ "$url" != "not-deployed" ] && update_project_field "$name" "netlify_url" "$url"
+}
+
+cmd_rename() {
+    local name; name=$(_pick_active "Rename:")
+    clack_run "edit" "[\"${name}\"]"
+    # reuse edit flow but skip selection, pre-fill name field
+    # simplest: just call edit with name pre-selected
+    CLACK_RESULT="{\"name\":\"${name}\",\"field\":\"name\",\"value\":\"\"}"
+    local new_name; new_name=$(node "$LIB/prompt.js" rename "$name" 2>/dev/null || \
+        { read -rp "New name: " new_name </dev/tty; echo "$new_name"; })
+    new_name=$(echo "$new_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+    CLACK_RESULT="{\"name\":\"${name}\",\"field\":\"name\",\"value\":\"${new_name}\"}"
+    cmd_edit_apply
+}
+
+cmd_edit_apply() {
+    local name field value
+    name=$(echo  "$CLACK_RESULT" | jq -r '.name')
+    field=$(echo "$CLACK_RESULT" | jq -r '.field')
+    value=$(echo "$CLACK_RESULT" | jq -r '.value')
+    local old_path; old_path=$(get_project_field "$name" "path")
+    local new_path; new_path="$(dirname "$old_path")/${value}"
+    mv "$old_path" "$new_path"
+    local old_repo; old_repo=$(get_project_field "$name" "repo_url")
+    local new_repo="local-only"
+    [ "$old_repo" != "local-only" ] && new_repo=$(github_rename_repo "$name" "$value")
+    update_project_field "$name"  "name"     "$value"
+    update_project_field "$value" "path"     "$new_path"
+    [ "$new_repo" != "local-only" ] && update_project_field "$value" "repo_url" "$new_repo"
+    log_ok "Renamed: ${name} → ${value}"
+}
+
+cmd_visibility() {
+    local name; name=$(_pick_active "Toggle visibility:")
+    local vis; vis=$(printf 'public\nprivate\n' | _pick_fzf "Set visibility:")
+    github_set_visibility "$name" "$vis"
+    update_project_field "$name" "visibility" "$vis"
+}
+
+cmd_desc() {
+    local name; name=$(_pick_active "Set description:")
+    local desc; read -rp "Description: " desc </dev/tty
+    github_set_description "$name" "$desc"
+    update_project_field "$name" "description" "$desc"
+}
+
+cmd_complete() {
+    local name; name=$(_pick_active "Mark complete:")
+    mark_project_complete "$name"
+    update_readme_on_complete "$(get_project_field "$name" "path")"
+    obsidian_complete "$name" &
+    log_done "Completed: ${name}"
+}
+
+cmd_archive() {
+    local name; name=$(_pick_active "Archive:")
+    archive_project "$name"; log_ok "Archived: ${name}"
+}
+
+cmd_note() {
+    local name; name=$(_pick_active "Note on:")
+    local note; read -rp "Note: " note </dev/tty
+    obsidian_quick_note "$name" "$note"
+    obsidian_daily_log "${name}: ${note}"
+    log_ok "Note saved."
+}
+
+cmd_open_github() {
+    local name; name=$(_pick_active "Open GitHub:")
+    local repo; repo=$(get_project_field "$name" "repo_url")
+    [ "$repo" = "local-only" ] && log_warn "No GitHub repo." && exit 0
+    browser_open_url "$repo"; log_ok "Opened: ${repo}"
+}
+
+cmd_open_live() {
+    local name; name=$(_pick_active "Open live site:")
+    local url; url=$(get_project_field "$name" "netlify_url")
+    [ "$url" = "not-deployed" ] && log_warn "Not deployed yet." && exit 0
+    browser_open_url "$url"; log_ok "Opened: ${url}"
+}
+
+cmd_open_netlify() {
+    local name; name=$(_pick_active "Open Netlify dashboard:")
+    browser_open_url "https://app.netlify.com/sites/${name}"
+    log_ok "Opened Netlify dashboard."
+}
+
+cmd_open_folder() {
+    local name; name=$(_pick_active "Open folder:")
+    local path; path=$(get_project_field "$name" "path")
+    xdg-open "$path" &>/dev/null &
+    log_ok "Opened: ${path}"
+}
+
+cmd_stats() {
+    print_banner
+    local active complete archived total
+    active=$(count_by_status "active")
+    complete=$(count_by_status "completed")
+    archived=$(count_by_status "archived")
+    total=$(( active + complete + archived ))
+    echo ""
+    log_info "Total:     ${BOLD}${total}${RESET}"
+    log_info "Active:    ${active}"
+    log_info "Complete:  ${complete}"
+    log_info "Archived:  ${archived}"
+    echo ""
+}
+
+cmd_backup() {
+    local dest="$HOME/.gocode-backup/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$dest"
+    cp "$PROJECTS_REGISTRY" "$dest/projects.json"
+    cp "$CONFIG_FILE"        "$dest/config.sh"
+    log_ok "Backup → ${dest}"
+}
+
+cmd_doctor() {
+    print_banner
+    log_step "Running diagnostics..."
+    echo ""
+    for dep in git gh jq fzf node netlify code; do
+        command -v "$dep" &>/dev/null \
+            && log_ok  "${dep}" \
+            || log_warn "${dep} — not found"
+    done
+    echo ""
+    jq '.' "$PROJECTS_REGISTRY" &>/dev/null \
+        && log_ok "projects.json — valid" \
+        || log_error "projects.json — invalid JSON"
+    echo ""
+    while IFS= read -r n; do
+        local p2; p2=$(get_project_field "$n" "path")
+        [ -d "$p2" ] \
+            && log_ok   "  ${n}" \
+            || log_error "  ${n} — folder MISSING: ${p2}"
+    done < <(get_incomplete_projects)
+    echo ""
+    log_done "Doctor complete."
+}
+
+cmd_update() {
+    log_step "Updating gocode..."
+    cd "$GOCODE_DIR" && git pull --rebase
+    log_done "gocode updated."
+}
+
+# =============================================================================
+# HELP
+# =============================================================================
+
+show_help() {
     print_banner
     divider
-    echo -e "  ${BOLD}PROJECT DASHBOARD${RESET}"
-    divider
-
-    local total active completed
-    total=$(jq '.projects | length' "$PROJECTS_REGISTRY")
-    active=$(count_by_status "active")
-    completed=$(count_by_status "completed")
-
-    echo -e "  Total: ${BOLD}$total${RESET}  Active: ${GREEN}$active${RESET}  Completed: ${DIM}$completed${RESET}"
+    echo -e "  ${BOLD}USAGE${RESET}   gocode [command]"
     echo ""
-
-    if [ "$active" -gt 0 ]; then
-        echo -e "  ${GREEN}${BOLD}ACTIVE${RESET}"
-        jq -r '.projects[] | select(.status == "active") |
-            "  ▸ \(.name) [\(.type // "vanilla")] — \(.created)\n    \(.repo_url)"' \
-            "$PROJECTS_REGISTRY"
-        echo ""
-    fi
-
-    if [ "$completed" -gt 0 ]; then
-        echo -e "  ${DIM}${BOLD}COMPLETED${RESET}"
-        jq -r '.projects[] | select(.status == "completed") |
-            "  ✓ \(.name) — \(.created)"' \
-            "$PROJECTS_REGISTRY" | while IFS= read -r line; do
-            echo -e "  ${DIM}$line${RESET}"
-        done
-        echo ""
-    fi
-
+    echo -e "  ${BOLD}CREATE & RESUME${RESET}"
+    echo -e "  ${CYAN}(no args)${RESET}         Resume a project"
+    echo -e "  ${CYAN}--new${RESET}             Create a new project"
+    echo -e "  ${CYAN}--list${RESET}            List all projects"
+    echo ""
+    echo -e "  ${BOLD}GIT & GITHUB${RESET}"
+    echo -e "  ${CYAN}--push${RESET}            Commit and push"
+    echo -e "  ${CYAN}--log${RESET}             Last 10 commits"
+    echo -e "  ${CYAN}--diff${RESET}            Uncommitted changes"
+    echo -e "  ${CYAN}--rename${RESET}          Rename project everywhere"
+    echo -e "  ${CYAN}--visibility${RESET}      Toggle public / private"
+    echo -e "  ${CYAN}--desc${RESET}            Set GitHub description"
+    echo ""
+    echo -e "  ${BOLD}DEPLOYMENT${RESET}"
+    echo -e "  ${CYAN}--deploy${RESET}          Deploy to Netlify"
+    echo -e "  ${CYAN}--open-live${RESET}       Open live site"
+    echo -e "  ${CYAN}--open-netlify${RESET}    Open Netlify dashboard"
+    echo -e "  ${CYAN}--open-github${RESET}     Open GitHub repo"
+    echo -e "  ${CYAN}--open-folder${RESET}     Open project in file manager"
+    echo ""
+    echo -e "  ${BOLD}PROJECT MANAGEMENT${RESET}"
+    echo -e "  ${CYAN}--status${RESET}          Show project details"
+    echo -e "  ${CYAN}--edit${RESET}            Edit name / desc / visibility"
+    echo -e "  ${CYAN}--delete${RESET}          Delete project everywhere"
+    echo -e "  ${CYAN}--complete${RESET}        Mark project complete"
+    echo -e "  ${CYAN}--archive${RESET}         Archive a project"
+    echo -e "  ${CYAN}--note${RESET}            Quick note to Obsidian"
+    echo -e "  ${CYAN}--stats${RESET}           Project statistics"
+    echo ""
+    echo -e "  ${BOLD}SYSTEM${RESET}"
+    echo -e "  ${CYAN}--doctor${RESET}          Check deps and registry"
+    echo -e "  ${CYAN}--backup${RESET}          Back up registry and config"
+    echo -e "  ${CYAN}--set-browser${RESET}     Reselect browser"
+    echo -e "  ${CYAN}--config${RESET}          Re-run setup wizard"
+    echo -e "  ${CYAN}--update${RESET}          Pull latest gocode"
+    echo -e "  ${CYAN}--help${RESET}            Show this help"
     divider
-
-    local daily_note="$OBSIDIAN_VAULT/05-DAILY-NOTES/$(date +%Y-%m-%d).md"
-    if [ -f "$daily_note" ]; then
-        log_step "Opening Obsidian..."
-        xdg-open "$daily_note" &>/dev/null &
-    fi
+    echo ""
 }
 
 # =============================================================================
-# MAIN MENU
-# =============================================================================
-
-main_menu() {
-    local has_active
-    has_active=$(count_by_status "active")
-
-    if [ "$has_active" -gt 0 ]; then
-        show_resume_menu
-        local result=$?
-        [ "$result" -eq 2 ] && create_project
-    else
-        log_info "No active projects."
-        echo ""
-        create_project
-    fi
-}
-
-# =============================================================================
-# ENTRYPOINT
+# ROUTER
 # =============================================================================
 
 case "${1:-}" in
-    --status|-s)
-        load_config; init_registry; show_status ;;
-    --complete|-c)
-        load_config; init_registry; show_complete_menu ;;
-    --delete|-d)
-        load_config; init_registry; delete_project ;;
-    --push|-p)
-        load_config; init_registry; git_push_workflow ;;
-    --open|-o)
-        load_config; init_registry
-        last=$(get_last_active_project)
-        if [ -n "$last" ] && [ "$last" != "null" ]; then
-            resume_project "$last"
-        else
-            log_error "No active project found."
-        fi ;;
-    --deploy)
-        load_config; init_registry
-        last=$(get_last_active_project)
-        project_path=$(get_project_field "$last" "path")
-        netlify_redeploy "$project_path" ;;
-    --config)
-        run_config_wizard ;;
-    --update)
-        log_step "Pulling latest gocode from GitHub..."
-        cd "$GOCODE_DIR" && git pull -q \
-            && log_done "gocode updated." \
-            || log_error "Update failed." ;;
-    --help|-h)
-        print_banner
-        echo -e "  ${BOLD}Usage:${RESET}"
-        echo -e "    gocode               Start or resume a project"
-        echo -e "    gocode --push        Commit and push current project"
-        echo -e "    gocode --open        Reopen last active project instantly"
-        echo -e "    gocode --delete      Delete a project everywhere"
-        echo -e "    gocode --deploy      Redeploy last project to Netlify"
-        echo -e "    gocode --status      Dashboard + open Obsidian"
-        echo -e "    gocode --complete    Mark a project as completed"
-        echo -e "    gocode --config      Re-run setup wizard"
-        echo -e "    gocode --update      Pull latest version from GitHub"
-        echo -e "    gocode --help        Show this help"
-        ;;
-    "")
-        print_banner
-        load_config
-        check_dependencies
-        init_registry
-        main_menu ;;
-    *)
-        log_error "Unknown flag: $1. Run 'gocode --help'."
-        exit 1 ;;
+    --new)          create_project ;;
+    --push)         cmd_push ;;
+    --deploy)       cmd_deploy ;;
+    --status)       cmd_status ;;
+    --list)         cmd_list ;;
+    --log)          cmd_log ;;
+    --diff)         cmd_diff ;;
+    --rename)       cmd_rename ;;
+    --edit)         cmd_edit ;;
+    --delete)       cmd_delete ;;
+    --visibility)   cmd_visibility ;;
+    --desc)         cmd_desc ;;
+    --complete)     cmd_complete ;;
+    --archive)      cmd_archive ;;
+    --note)         cmd_note ;;
+    --open-github)  cmd_open_github ;;
+    --open-netlify) cmd_open_netlify ;;
+    --open-live)    cmd_open_live ;;
+    --open-folder)  cmd_open_folder ;;
+    --stats)        cmd_stats ;;
+    --backup)       cmd_backup ;;
+    --doctor)       cmd_doctor ;;
+    --set-browser)  set_browser_interactive ;;
+    --config)       run_config_wizard ;;
+    --update)       cmd_update ;;
+    --help|-h)      show_help ;;
+    "")             resume_project ;;
+    *)  log_error "Unknown command: ${1}"; show_help; exit 1 ;;
 esac

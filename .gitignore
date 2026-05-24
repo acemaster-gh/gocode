@@ -1,2 +1,5 @@
-*.swp
-*.swo
+data/projects.json
+.devsession/
+node_modules/
+*.log
+.DS_Store

@@ -1,36 +1,20 @@
 <!DOCTYPE html>
-<html lang="en" class="light">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PROJECT_NAME</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        primary: '#6366f1',
-                        'primary-hover': '#4f46e5',
-                    }
-                }
-            }
-        }
-    </script>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Project</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="style.css"/>
 </head>
-<body class="min-h-screen bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 transition-colors duration-300 flex flex-col items-center justify-center">
-
-    <button id="themeToggle" aria-label="Toggle dark mode"
-        class="fixed top-4 right-4 w-10 h-10 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center text-lg shadow-sm hover:scale-110 transition-transform z-50">
-        🌙
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-content-center">
+  <div id="app" class="text-center space-y-6 p-8">
+    <h1 class="text-5xl font-bold text-indigo-400 tracking-tight">Hello</h1>
+    <p class="text-slate-400 text-lg">Start building something great.</p>
+    <button class="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2 rounded-lg transition-colors">
+      Get Started
     </button>
-
-    <main id="app" class="w-full max-w-2xl px-6 py-10">
-
-    </main>
-
-    <script src="script.js"></script>
+  </div>
+  <script src="script.js" type="module"></script>
 </body>
 </html>

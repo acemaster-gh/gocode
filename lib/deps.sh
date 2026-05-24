@@ -1,45 +1,29 @@
 #!/usr/bin/env bash
-# =============================================================================
-# deps.sh — Dependency checker
-# Part of gocode v1.0.1
-# =============================================================================
+# lib/deps.sh — gocode v1.0.3
 
 check_dependencies() {
-    log_step "Checking dependencies..."
     local missing=()
-
-    for cmd in git gh code jq; do
-        if ! command -v "$cmd" &>/dev/null; then
-            missing+=("$cmd")
-        fi
+    for cmd in git gh jq fzf code; do
+        command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 
-    # Chrome — check configured binary
-    if ! command -v "${CHROME_BIN:-google-chrome}" &>/dev/null; then
-        missing+=("${CHROME_BIN:-google-chrome}")
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not found — installing..."
+        sudo apt-get install -y jq &>/dev/null && log_ok "jq installed." || true
+        missing=("${missing[@]/jq}")
     fi
 
-    # jq — auto install silently
-    if [[ " ${missing[*]} " =~ " jq " ]]; then
-        log_warn "jq not found. Installing..."
-        sudo apt-get install -y jq &>/dev/null
-        if command -v jq &>/dev/null; then
-            log_ok "jq installed."
-            missing=("${missing[@]/jq}")
-        fi
+    if ! command -v fzf &>/dev/null; then
+        log_warn "fzf not found — installing..."
+        sudo apt-get install -y fzf &>/dev/null && log_ok "fzf installed." || true
+        missing=("${missing[@]/fzf}")
     fi
 
-    # Netlify — soft check only
-    if ! command -v netlify &>/dev/null; then
-        log_warn "Netlify CLI not found — auto-deploy will be skipped."
-        log_warn "Install: npm install -g netlify-cli && netlify login"
-    fi
+    command -v netlify &>/dev/null || log_warn "netlify-cli not found — deploys will be skipped."
 
     if [ ${#missing[@]} -gt 0 ]; then
-        log_error "Missing required dependencies: ${missing[*]}"
-        log_error "Install them and re-run gocode."
+        log_error "Missing: ${missing[*]}"
+        log_error "Run: bash install.sh"
         exit 1
     fi
-
-    log_ok "All dependencies found."
 }

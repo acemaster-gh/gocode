@@ -1,90 +1,129 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/readme_gen.sh — Auto README generator for projects
-# gocode v1.0.2
+# lib/readme_gen.sh — Project README generator
+# gocode v1.0.3
 # =============================================================================
 
-# ── Generate README for a project folder ──────────────────────────────────────
+_stack_list() {
+    case "$1" in
+        vanilla)  printf '%s\n' "- HTML" "- CSS" "- JavaScript (Vanilla)" ;;
+        tailwind) printf '%s\n' "- HTML" "- Tailwind CSS" "- JavaScript" ;;
+        react)    printf '%s\n' "- React" "- Vite" "- JavaScript" ;;
+        *)        printf '%s\n' "- HTML" "- CSS" "- JavaScript" ;;
+    esac
+}
+
+_ascii_preview() {
+    case "$1" in
+        vanilla|tailwind) cat <<'EOF'
+┌──────────────────────────────────────────┐
+│                                          │
+│   Title / Header                         │
+│                                          │
+│   ┌──────────┐   ┌──────────┐           │
+│   │  Button  │   │  Button  │           │
+│   └──────────┘   └──────────┘           │
+│                                          │
+│   ┌──────────────────────────────────┐  │
+│   │  Main content area               │  │
+│   └──────────────────────────────────┘  │
+│                                          │
+└──────────────────────────────────────────┘
+EOF
+            ;;
+        react) cat <<'EOF'
+App
+ ├── Header
+ │    └── Nav
+ ├── Main
+ │    ├── Component
+ │    └── Component
+ └── Footer
+EOF
+            ;;
+    esac
+}
+
 generate_project_readme() {
-    local project_name="$1"
-    local project_type="$2"
-    local repo_url="$3"
-    local netlify_url="${4:-not-deployed}"
-    local date
-    date=$(date +%Y-%m-%d)
+    local name="$1" type="$2" path="$3"
+    local repo_url="${4:-}"
+    local netlify_url="${5:-}"
+    local description="${6:-}"
 
-    local live_line=""
-    if [[ "$netlify_url" != "not-deployed" ]]; then
-        live_line="[$project_name Live Demo]($netlify_url)"
+    local started; started=$(date +%Y-%m-%d)
+    local stack; stack=$(_stack_list "$type")
+    local ascii; ascii=$(_ascii_preview "$type")
+
+    local live_section
+    if [ -n "$netlify_url" ] && [ "$netlify_url" != "not-deployed" ]; then
+        live_section="## Live Demo
+
+**${netlify_url}**"
     else
-        live_line="Not deployed yet"
+        live_section="## Live Demo
+
+_Not deployed yet._"
     fi
 
-    local stack_line="HTML · CSS · JavaScript (Vanilla)"
-    if [[ "$project_type" == "tailwind" ]]; then
-        stack_line="HTML · Tailwind CSS · JavaScript (Vanilla)"
-    elif [[ "$project_type" == "react" ]]; then
-        stack_line="React · Vite · JavaScript"
+    local repo_section=""
+    if [ -n "$repo_url" ] && [ "$repo_url" != "local-only" ]; then
+        repo_section="## Repo
+
+**${repo_url}**"
     fi
 
-    cat > README.md <<EOF
-# $project_name
+    local desc_text="${description:-_Add a short description of what this project does._}"
 
-> **Stack:** $stack_line | **Started:** $date
+    cat > "$path/README.md" <<EOF
+# ${name}
 
-## 🔗 Links
-
-| Resource | URL |
-|----------|-----|
-| GitHub   | $repo_url |
-| Live     | $live_line |
-
-## 📖 Description
-
-> Add a short description of what this project does.
-
-## ✨ Features
-
-- [ ] Feature 1
-- [ ] Feature 2
-- [ ] Feature 3
-
-## 🚀 Getting Started
-
-\`\`\`bash
-git clone $repo_url
-cd $project_name
-# Open with VS Code Live Server
-\`\`\`
-
-## 🧠 What I Learned
-
-> Add notes about what you learned building this.
-
-## 📅 Progress
-
-| Date | Update |
-|------|--------|
-| $date | Project created |
+**Started:** ${started} &nbsp;|&nbsp; **Stack:** ${type}
 
 ---
 
-*Built with [gocode](https://github.com/acemaster-gh/gocode) ⚡*
+## Description
+
+${desc_text}
+
+${live_section}
+
+${repo_section}
+
+## Built With
+
+${stack}
+
+## Preview
+
+\`\`\`
+${ascii}
+\`\`\`
+
+## What I Learned
+
+_Add notes about what you learned building this._
+
+## Progress
+
+| Date | Update |
+|------|--------|
+| ${started} | Project created |
+
+---
+
+_Built with [gocode](https://github.com/acemaster-gh/gocode) v1.0.3 ⚡_
 EOF
 
-    log_ok "README.md generated for $project_name"
+    log_ok "README.md generated."
 }
 
-# ── Update README when project completes ──────────────────────────────────────
+# Append completion row to README progress table
 update_readme_on_complete() {
     local project_path="$1"
-    local date
-    date=$(date +%Y-%m-%d)
-
-    if [ -f "$project_path/README.md" ]; then
-        # Append completion entry to progress table
-        sed -i "/| $date | Project created |/a | $date | ✅ Project completed |" \
-            "$project_path/README.md" 2>/dev/null
-        log_ok "README updated with completion date."
-    fi
+    local date; date=$(date +%Y-%m-%d)
+    local readme="$project_path/README.md"
+    [ ! -f "$readme" ] && return
+    # Insert after the "Project created" row
+    sed -i "/Project created/a | ${date} | ✅ Project completed |" "$readme" 2>/dev/null
+    log_ok "README updated with completion date."
 }
