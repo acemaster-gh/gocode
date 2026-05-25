@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
-# =============================================================================
-# gocode v1.0.3 — Tailwind CSS CLI scaffold
-# Creates proper src/dist structure with Tailwind installed locally
-# =============================================================================
+# gocode v1.0.3 — Tailwind CSS v4 scaffold
 
 DEST="$1"
 NAME="$(basename "$DEST")"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Copy boilerplate structure
-cp -r "$SRC/." "$DEST/"
+# Create folder structure
+mkdir -p "$DEST/src/css" "$DEST/src/js" "$DEST/src/components" "$DEST/dist/css"
 
-# Replace PROJECT_NAME placeholder everywhere
-find "$DEST" -type f \( -name "*.html" -o -name "*.js" -o -name "*.json" -o -name "*.css" \) | while read -r file; do
-    sed -i "s/PROJECT_NAME/${NAME}/g" "$file"
-done
+# Copy all boilerplate files
+cp "$SRC/src/index.html"            "$DEST/src/index.html"
+cp "$SRC/src/css/input.css"         "$DEST/src/css/input.css"
+cp "$SRC/src/js/main.js"            "$DEST/src/js/main.js"
+cp "$SRC/src/components/header.html" "$DEST/src/components/header.html"
+cp "$SRC/src/components/footer.html" "$DEST/src/components/footer.html"
+cp "$SRC/package.json"              "$DEST/package.json"
+cp "$SRC/.gitignore"                "$DEST/.gitignore"
+
+# Replace PROJECT_NAME placeholder
+find "$DEST" -type f \( -name "*.html" -o -name "*.js" -o -name "*.json" -o -name "*.css" \) \
+    -exec sed -i "s/PROJECT_NAME/${NAME}/g" {} +
 
 cd "$DEST"
 
-# Install Tailwind CSS locally
-npm install --save-dev tailwindcss@latest --silent
+# Install Tailwind v4
+npm install --save-dev tailwindcss @tailwindcss/cli --silent
 
-# Run initial build so dist/css/style.css exists from the start
-npx tailwindcss -i ./src/css/input.css -o ./dist/css/style.css --quiet 2>/dev/null || true
+# Initial build so CSS exists immediately
+npx @tailwindcss/cli -i ./src/css/input.css -o ./dist/css/style.css --quiet 2>/dev/null || true
 
-echo "Tailwind CSS CLI scaffolded. Run: npm run dev"
+echo "Tailwind v4 ready — run: npm run dev"
