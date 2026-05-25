@@ -22,6 +22,7 @@ source "$LIB/readme_gen.sh"
 
 load_config
 init_registry
+export TERM_COLS
 
 # =============================================================================
 # CLACK HELPER — runs prompt.js, result goes to tempfile
@@ -34,7 +35,7 @@ clack_run() {
     local arg="${2:-}"
     local tmpfile; tmpfile=$(mktemp)
 
-    GOCODE_RESULT_FILE="$tmpfile" node "$LIB/prompt.js" "$cmd" "$arg"
+    GOCODE_RESULT_FILE="$tmpfile" TERM_COLS="$TERM_COLS" node "$LIB/prompt.js" "$cmd" "$arg"
     local exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
@@ -140,12 +141,23 @@ create_project() {
 _inject_boilerplate() {
     local type="$1" dest="$2"
     local src="$GOCODE_DIR/boilerplates/${type}"
+
     if [ "$type" = "react" ]; then
         spinner_start "Scaffolding React + Vite..."
         bash "$src/scaffold.sh" "$dest" 2>/dev/null
-        spinner_stop; clack_log ok "React + Vite scaffolded."
+        spinner_stop
+        clack_log ok "React + Vite scaffolded."
         return
     fi
+
+    if [ "$type" = "tailwind" ]; then
+        spinner_start "Scaffolding Tailwind CSS CLI..."
+        bash "$src/scaffold.sh" "$dest" 2>/dev/null
+        spinner_stop
+        clack_log ok "Tailwind CSS CLI scaffolded."
+        return
+    fi
+
     if [ -d "$src" ]; then
         cp -r "$src/." "$dest/"
         clack_log ok "Boilerplate injected (${type})."
@@ -615,6 +627,34 @@ show_help() {
     echo ""
 }
 
+
+# =============================================================================
+# MAIN MENU FUNCTION
+# =============================================================================
+
+show_main_menu() {
+    clack_run "menu"
+    local action
+    action=$(echo "$CLACK_RESULT" | jq -r '.action')
+    case "$action" in
+        new)         create_project ;;
+        resume)      resume_project ;;
+        push)        cmd_push ;;
+        deploy)      cmd_deploy ;;
+        list)        cmd_list ;;
+        status)      cmd_status ;;
+        edit)        cmd_edit ;;
+        delete)      cmd_delete ;;
+        note)        cmd_note ;;
+        config)      run_config_wizard ;;
+        set-browser) set_browser_interactive ;;
+        doctor)      cmd_doctor ;;
+        backup)      cmd_backup ;;
+        stats)       cmd_stats ;;
+        update)      cmd_update ;;
+    esac
+}
+
 # =============================================================================
 # ROUTER
 # =============================================================================
@@ -646,6 +686,6 @@ case "${1:-}" in
     --config)       run_config_wizard ;;
     --update)       cmd_update ;;
     --help|-h)      show_help ;;
-    "")             resume_project ;;
+    "")             show_main_menu ;;
     *)  log_error "Unknown command: ${1}"; show_help; exit 1 ;;
 esac

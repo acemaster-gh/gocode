@@ -1,0 +1,12 @@
+{
+  "name": "PROJECT_NAME",
+  "version": "1.0.0",
+  "description": "Tailwind CSS project — built with gocode",
+  "scripts": {
+    "dev":   "tailwindcss -i ./src/css/input.css -o ./dist/css/style.css --watch",
+    "build": "tailwindcss -i ./src/css/input.css -o ./dist/css/style.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

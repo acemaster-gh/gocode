@@ -26,14 +26,13 @@ netlify_deploy() {
     spinner_start "Creating Netlify site..."
     local site_json site_id site_url
 
-    site_json=$(netlify api createSite \
-        --data "{\"name\":\"${project_name}\"}" 2>/dev/null || echo "")
+    site_json=$(netlify sites:create --name "$project_name" --json 2>/dev/null || echo "")
     site_id=$(echo  "$site_json" | jq -r '.id      // empty' 2>/dev/null || echo "")
     site_url=$(echo "$site_json" | jq -r '.ssl_url // .url // empty' 2>/dev/null || echo "")
 
     # If name taken, let Netlify auto-assign
     if [ -z "$site_id" ]; then
-        site_json=$(netlify api createSite --data '{}' 2>/dev/null || echo "")
+        site_json=$(netlify sites:create --json 2>/dev/null || echo "")
         site_id=$(echo  "$site_json" | jq -r '.id      // empty' 2>/dev/null || echo "")
         site_url=$(echo "$site_json" | jq -r '.ssl_url // .url // empty' 2>/dev/null || echo "")
     fi
