@@ -54,6 +54,7 @@ func runMenu() error {
 		}
 		return err
 	}
+	_ = cfg
 
 	ui.Banner(Version)
 
@@ -72,16 +73,16 @@ func runMenu() error {
 			huh.NewSelect[string]().
 				Title(fmt.Sprintf("gocode v%s  —  %s", Version, ui.Dim.Render(hint))).
 				Options(
-					huh.NewOption("⚡  New Project      scaffold → push → deploy", "new"),
-					huh.NewOption("▶   Resume           open last project in VS Code", "resume"),
-					huh.NewOption("↑   Push             commit + push to GitHub", "push"),
-					huh.NewOption("🚀  Deploy           push live to Netlify", "deploy"),
-					huh.NewOption("▦   All Projects     table view of everything", "list"),
-					huh.NewOption("◉   Status           detailed info on a project", "status"),
-					huh.NewOption("✎   Edit             name · description · visibility", "edit"),
-					huh.NewOption("✕   Delete           remove project everywhere", "delete"),
-					huh.NewOption("📝  Quick Note       append to Obsidian", "note"),
-					huh.NewOption("⚙   Settings         config · doctor · backup · stats", "settings"),
+					huh.NewOption("  New Project      scaffold · push · deploy", "new"),
+					huh.NewOption("  Resume           open last project in VS Code", "resume"),
+					huh.NewOption("  Push             commit + push to GitHub", "push"),
+					huh.NewOption("  Deploy           push live to Netlify", "deploy"),
+					huh.NewOption("  All Projects     table view of everything", "list"),
+					huh.NewOption("  Status           detailed info on a project", "status"),
+					huh.NewOption("  Edit             name · description · visibility", "edit"),
+					huh.NewOption("  Delete           remove project everywhere", "delete"),
+					huh.NewOption("  Quick Note       append to Obsidian", "note"),
+					huh.NewOption("  Settings         config · doctor · backup · stats", "settings"),
 				).Value(&action),
 		),
 	).WithTheme(huh.ThemeCharm()).Run()
@@ -93,10 +94,10 @@ func runMenu() error {
 		return err
 	}
 
-	return dispatchMenu(action, cfg)
+	return dispatchMenu(action)
 }
 
-func dispatchMenu(action string, cfg *config.Config) error {
+func dispatchMenu(action string) error {
 	switch action {
 	case "new":
 		return runNew(newCmd, nil)
@@ -129,20 +130,22 @@ func runSettingsMenu() error {
 			huh.NewSelect[string]().
 				Title("Settings").
 				Options(
-					huh.NewOption("🔧  Setup Wizard    reconfigure gocode", "config"),
-					huh.NewOption("🩺  Doctor          check all dependencies", "doctor"),
-					huh.NewOption("💾  Backup          back up registry + config", "backup"),
-					huh.NewOption("📊  Stats           project statistics", "stats"),
-					huh.NewOption("⬆   Update gocode   pull + rebuild", "update"),
+					huh.NewOption("  Setup Wizard    reconfigure gocode", "config"),
+					huh.NewOption("  Doctor          check all dependencies", "doctor"),
+					huh.NewOption("  Backup          back up registry + config", "backup"),
+					huh.NewOption("  Stats           project statistics", "stats"),
+					huh.NewOption("  Update gocode   pull + rebuild", "update"),
 				).Value(&action),
 		),
 	).WithTheme(huh.ThemeCharm()).Run()
+
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return nil
 		}
 		return err
 	}
+
 	switch action {
 	case "config":
 		return runConfigWizard()
