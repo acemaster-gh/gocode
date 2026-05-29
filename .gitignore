@@ -3,3 +3,5 @@ data/projects.json
 node_modules/
 *.log
 .DS_Store
+setup_v2.sh
+gocode

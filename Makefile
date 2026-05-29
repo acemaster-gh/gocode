@@ -1,27 +1,19 @@
 BINARY     := gocode
 VERSION    := 2.0.0
-INSTALL_DIR := $(HOME)/.gocode
 BUILD_FLAGS := -ldflags "-X main.Version=$(VERSION) -s -w"
-SRC        := .
 
-.PHONY: all build install clean tidy fmt vet test
+.PHONY: all build install clean tidy fmt vet
 
-all: tidy build install
+all: tidy build
 
 build:
 	@echo "  Building gocode v$(VERSION)..."
-	@go build $(BUILD_FLAGS) -o $(BINARY) $(SRC)
-	@echo "  Binary: ./$(BINARY)"
+	@go build $(BUILD_FLAGS) -o $(BINARY) .
+	@echo "  Binary: $(PWD)/$(BINARY)"
 
 install: build
-	@mkdir -p $(INSTALL_DIR)
-	@cp $(BINARY) $(INSTALL_DIR)/$(BINARY)
-	@chmod +x $(INSTALL_DIR)/$(BINARY)
-	@echo "  Installed: $(INSTALL_DIR)/$(BINARY)"
-	@echo ""
-	@echo "  Add to PATH if not already:"
-	@echo "    echo 'export PATH=\"$$HOME/.gocode:$$PATH\"' >> ~/.bashrc"
-	@echo "    source ~/.bashrc"
+	@echo "  Installed: $(PWD)/$(BINARY)"
+	@echo "  Alias: alias gocode=\"$$HOME/.gocode/gocode\""
 
 tidy:
 	@go mod tidy
@@ -32,11 +24,5 @@ fmt:
 vet:
 	@go vet ./...
 
-test:
-	@go test -v ./...
-
 clean:
 	@rm -f $(BINARY)
-
-# Fast rebuild (skip tidy)
-quick: build install

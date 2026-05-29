@@ -1,0 +1,6 @@
+# gocode v2.0.0 config
+gh_user             = "acemaster-gh"
+projects_dir        = "/home/ace/Desktop/js-projects"
+obsidian_vault      = "/home/ace/Desktop/DevMaster-Vault"
+sleep_before_browser = 5
+browser_tabs        = ["https://tailwindcss.com/docs/styling-with-utility-classes"]
